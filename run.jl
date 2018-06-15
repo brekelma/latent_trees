@@ -2,8 +2,9 @@ using GraphicalModelLearning
 using CSV
 include("utils.jl")
 include("mrf.jl")
+include("ipopt.jl")
 num_samp = 100000
-tol = .000001
+tol = .00001
 
 df = CSV.read("example.csv"; delim = "\t", header=0, types = [String, Float64], nullable = false)
 splits = [split(df[r,1],',', keep = false) for r=1:size(df)[1]]
@@ -34,6 +35,10 @@ println(typeof(samples), typeof(model))
 print_params(params)
 print_stats(samples)
 
+#println()
+#print_pearl_corrs(samples)
+
+
 
 p = mrf(params, samples)
 a= [hcat(samples, fill(h_i, size(samples)[1])) for h_i in [-1,1]]
@@ -42,23 +47,36 @@ q = hmrf(q_params, samples, [-1,1])
 
 println("q params initialization")
 print_params(q.params)
-
-println(q.samples, size(q.samples[1]))
-
-kl_history = zeros(0)
-# replace with gradient condition? #size(kl_history)[1] <= 1 || 
-while size(kl_history)[1] <= 1 || abs(kl_history[end] - kl_history[end-1]) > tol 
-	#println("Entering while")
-	append!(kl_history, kl_empirical(p,q, base=2))
-	#println("gradient ascent")
-	kl_gradient_ascent(q, reversed=false)
-	if size(kl_history)[1]%100== 0
-		println(" * Iter ", size(kl_history)[1], "* KL = ", kl_history[end])
-	end
-end
-println(" * Iter ", size(kl_history)[1], "* KL = ", kl_history[end])
 println()
-println("Final Params")
-print_params(q.params)
 
-display_model(q)
+println("Corr Test for P_true")
+pearl_corr_test(p)
+
+run_manual = false
+verbose = false
+if run_manual 
+	kl_history = zeros(0)
+	# replace with gradient condition? #size(kl_history)[1] <= 1 || 
+	while size(kl_history)[1] <= 1 || abs(kl_history[end] - kl_history[end-1]) > tol 
+		#println("Entering while")
+		append!(kl_history, kl_empirical(p,q, base=2))
+		#println("gradient ascent")
+		kl_gradient_ascent(q, step = .01, reversed=false)
+		if verbose && size(kl_history)[1]%100== 0
+			println(" * Iter ", size(kl_history)[1], "* KL = ", kl_history[end])
+		end
+	end
+	println(" * Iter ", size(kl_history)[1], "* KL = ", kl_history[end])
+	println()
+	println("Final Params")
+	print_params(q.params)
+end
+
+kl = emp_lld(p) - max_lld(q)
+println("Final KL divergence: bits ", ln_convert(kl,2), " nats: ", kl)
+#display_model(q)
+
+println("")
+println("Optimized Q Corr Test?")
+pearl_corr_test(p)
+

@@ -1,29 +1,44 @@
 using CSV
 using PlotRecipes
 
+include("mrf.jl")
+include("math.jl")
+
 function display_model(m::MRF)
-	source = Array{Int64, 1}()
-	dest = Array{Int64, 1}()
-	weights = Array{Float64, 1}()
-	nodes = Array{Any, 1}()
-	for coupling in keys(m.params)
+	source = Array{Int64,1}()
+	dest = Array{Int64,1}()
+	weights = Array{Float64,1}()
+	nodes = Array{Any,1}()
+	nodew = Array{Any,1}()
+
+	obs = size(m.samples[1])[2] - 1 - (isa(m, mrf) ? 0 : length(m.hsupport[1]))
+	println("OBSEVED", obs)
+	_keys = [i for i in keys(m.params)]
+	sorted = _keys[sortperm([j[1] for j in _keys])]
+	sorted = sorted[sortperm([length(j) for j in sorted])]
+	for coupling in sorted
+		println(coupling)
 		if length(coupling) == 1
-			println(typeof(coupling[1]))
 			append!(nodes, coupling[1])
+			append!(nodew, m.params[coupling])
 		elseif length(coupling) == 2
 			append!(source, coupling[1])
 			append!(dest, coupling[2])
 			append!(weights, m.params[coupling])
 		else
-			new_node = round(m.params[coupling], 2)
+			new_node = length(nodes)+1
 			append!(nodes, new_node)
+			append!(nodew, round(m.params[coupling], 2))
 			for i in coupling
 				append!(source, i)
 				append!(dest, new_node)
 			end
 		end
 	end
-	graphplot(source, dest, names=nodes, method=:tree, m =[length(split(n,'.', keep = false)) > 1 ? :yellow : :steelblue for n in nodes])
+	println("weights ", weights)
+	#fontsize, nodeshape, and nodesize 
+	graphplot(source, dest, weights, names=nodes, curves=false, root = :left, node_weights = nodew, nodeshape = :circle, nodesize = 6, fontsize = 14, 
+		l = (4, cgrad()), method=:tree, m =[n > obs ? :yellow : :steelblue for n in nodes])
 end
 
 
@@ -48,7 +63,7 @@ function print_params{T <: Real}(dict::Dict{Tuple, T})
 	sorted = _keys[sortperm([j[1] for j in _keys])]
 	sorted = sorted[sortperm([length(j) for j in sorted])]
 	for i in sorted
-		println(i, "\t", dict[i])
+		println(i, "\t", round(dict[i],3))
 	end
 	println()
 end
@@ -64,16 +79,34 @@ function pprint2d{T <: Real}(arr::Array{T, 2})
 	end
 end
 
+
+
+
 function print_stats{T <: Real}(samples::Array{T, 2})
 	num_conf = size(samples)[1]
 	d = size(samples)[2]-1 # NOT ROBUST
 	num_samp = sum(samples[k,1] for k=1:num_conf)
-	mean = [sum(samples[k,1]/num_samp*samples[k,1+i] for k=1:num_conf) for i=1:d]
-	corr = [sum(samples[k,1]/num_samp*samples[k,1+i]*samples[k,1+j] for k=1:num_conf) for i=1:d, j=1:d]
+	#mean = [sum(samples[k,1]/num_samp*samples[k,1+i] for k=1:num_conf) for i=1:d]
+	#corr = [sum(samples[k,1]/num_samp*samples[k,1+i]*samples[k,1+j] for k=1:num_conf) for i=1:d, j=1:d]
+	#cov = [corr[i,j] - mean[i]mean[j] for i=1:d, j=1:d]
+
+	mean = means(samples)
+	cov = covs(samples)
+	corr = corrs(samples)
+	rho = corrs(samples, pearson = true)
+
 	println("mean spins ")
 	println(mean)
 	
-	println("correlations ")
+	println("multiplicative correlations ")
 	pprint2d(corr)
 	println()
+
+	println("covariances")
+	pprint2d(cov)
+	println()
+
+	println("corr coeff")
+	pprint2d(rho)
 end
+

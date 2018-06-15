@@ -1,15 +1,18 @@
 using Compat
+include("math.jl")
+
 # CONVERT EVERYTHING TO MY TYPE?
 @compat abstract type MRF end
 
 type mrf <: MRF
 	params::Dict{Tuple, Float64}
 	samples::Array{Array{Real,2},1} #Array{Real,2}
-	#order::Int64
+	dim::Int64
+	order::Int64
 	#base::Float64
 	#stats::Dict{Tuple, Array{Float64,1}}
-	mrf(params, samples) = new(params, [samples])#, 2)#, Dict{Tuple, Array{Float64,1}}())
-	#mrf(params, samples) = new(params, samples, size(samples)[2]-1, Dict{Tuple, Array{Float64,1}}())
+	mrf(params, samples) = new(params, [samples], maximum([i for theta in keys(params) for i in theta]), maximum([length(i) for i in keys(params)]))
+
 end
 
 # Add hidden configurations (Specify as Joint binary, e.g.)  
@@ -18,56 +21,22 @@ type hmrf <: MRF
 	params::Dict{Tuple, Float64}
 	samples::Array{Array{Real,2},1} # extra dimension for hidden node(s)
 	hsupport::Array{Real,1} #, String}
+	dim::Int64
+	order::Int64
 	#stats::Dict{Tuple, Array{Float64,1}}
 
 
 	# CHECK AGAIN
-	hmrf(params, samples, hsupport) = new(params, [hcat(samples, fill(h_i, size(samples)[1])) for h_i in hsupport], hsupport)
+	hmrf(params, samples, hsupport) = new(params, [hcat(samples, fill(h_i, size(samples)[1])) for h_i in hsupport], hsupport, maximum([i for theta in keys(params) for i in theta]), maximum([length(i) for i in keys(params)]))
 	#FULL CONSTRUCTOR
 	#if ndims(samples, 2) && !isa(hsupport, String) ? new(params, permutedims([hcat(samples, fill(h_i, size(samples)[1])) for h_i in hsupport], [2,3,1]), hsupport) : new(params, permutedims([samples], [2,3,1]), hsupport)#, Dict{Tuple, Array{Float64,1}}())
 	
 	# NECESSARY to permute dims?
 	#hmrf(params, samples, hsupport) = new(params, samples, hsupport, Dict{Tuple, Array{Float64,1}}())
 
-	hmrf(params, samples) = new(params, [samples], "none")
+	hmrf(params, samples) = new(params, [samples], "none", maximum([i for theta in keys(params) for i in theta]), maximum([length(i) for i in keys(params)]))
 end
 
-
-function ln_convert(ln::Float64, base::Real=2.0)
-	return log(base, exp(ln))
-end
-
-function logsumexp(x::AbstractArray{T}) where T<:Real
-    S = typeof(exp(zero(T)))    # because of 0.4.0
-    isempty(x) && return -S(Inf)
-    u = maximum(x)
-    abs(u) == Inf && return any(isnan, x) ? S(NaN) : u
-    s = zero(S)
-    for i = 1:length(x)
-        @inbounds s += exp(x[i] - u)
-    end
-    log(s) + u
-end
-
-function logsumexp(x::Array{Array{T,N},N}) where N where T<:Real
-	a = zeros(T, (length(x), length(x[1])))
-	for i=1:length(x)
-		a[i,:] = x[i]
-	end
-	
-	return logsumexp(a)
-	#sum(logsumexp(x[i]) for i in length(x))
-end
-
-function logsum(x::Array{Array{T,N},N}) where N where T<:Real
-	a = zeros(T, (length(x), length(x[1])))
-	for i=1:length(x)
-		a[i,:] = [log(l) for l in x[i]]
-	end
-	
-	return logsumexp(a)
-	#sum(logsumexp(x[i]) for i in length(x))
-end
 
 function evidence(m::MRF)
 	configs = size(m.samples[1])[1]
@@ -86,7 +55,7 @@ end
 # log sum exp taken over all k configs, h hidden states
 function log_partition(m::MRF)
 	#evidence_by_hidden = evidence(m)
-	return logsum(evidence(m))
+	return logsumlog(evidence(m))
 	#return logsumexp(evidence(m))
 end
 
@@ -103,6 +72,12 @@ function avg_lld(m::MRF, dist::Array{Float64, 1})
 	log_marginal = log(data_evidence) - log_partition(m)
 	return sum(dist[k]*log_marginal[k] for k=1:size(m.samples[1])[1])
 end
+
+function xent(p, samples)
+	m = mrf(p, samples)
+	return sum(emp_lld(m))
+end
+
 
 function kl_empirical(m1::MRF, m2::MRF; base::Real = exp(1))
 	return ln_convert(sum(emp_lld(m1)) - sum(emp_lld(m2)), base)
@@ -123,8 +98,8 @@ function gradient_xent(m::MRF; reversed=false)
 	end
 	# marginalizing over hiddens (unnecessary for reversed problem)
 	
+	evidences = evidence(m) # k x h
 	if !reversed
-		evidences = evidence(m) # k x h
 		data_evidence = [sum(evidences[i]) for i=1:length(evidences)] # k x 1
 		
 		conditionals = evidences ./ data_evidence
@@ -132,7 +107,6 @@ function gradient_xent(m::MRF; reversed=false)
 		hiddens = [sum(conditionals[k][h]*m.hsupport[h] for h=1:length(m.hsupport)) for k=1:size(m.samples[1])[1]]
 		sample_exp = hcat(m.samples[1][:,1:size(m.samples[1])[2]-length(m.hsupport)+1], hiddens)
 	end
-
 	dist = [sum(evidences[i]) for i=1:length(evidences)] / exp(log_partition(m))
 	#println("DISTRIBUTION OVER DATA : ", dist, sum(dist))
 	#sum(evidences, length(size(evidences))) / exp(log_partition(m))
@@ -155,4 +129,23 @@ function kl_gradient_ascent(m::MRF; step::Float64 = .001, reversed=false)
 	for coupling in keys(m.params)
 		m.params[coupling] = m.params[coupling] + step * gradient_xent(m)[coupling]
 	end
+end
+
+function pearl_corr_test(m::MRF)
+	# calc rho_ij - rho_jk*rho_ik
+	tests = Dict{Tuple, Float64}()
+	rho = corr(m.samples, pearson = true)
+	for coupling in m.params
+		if length(coupling) == 2
+			i = coupling[1]
+			j = coupling[2]
+			k = setdiff([ii for ii=1:m.dim],[i,j])
+			tests[coupling] = rho[i,j] - rho[i,k]*rho[j,k]
+			println("ij: ", coupling, " k:", k, " test: ", tests[coupling])
+		end
+	end
+	min = minimum([v for v in tests[k] for k in keys(tests)])
+	println("Pearl 3 Body Reconstruction Test ", min > 0 ? "SUCCEEDS" : "FAILS")
+	println("min value ", min)
+	println("Correlations Test ", rho[i,j]*rho[i,k]*rho[j,k] > 0 ? "SUCCEEDS" : "FAILS")
 end
