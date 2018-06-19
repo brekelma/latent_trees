@@ -58,6 +58,9 @@ for s = 1:length(vary_samples)
 		params = read_params("example.csv")
 		min_param = params[varied]
 	end
+	interactions = Array{Float64, 1}()
+	triangle_test = Array{Any, 1}()
+	corr_test = Array{Any, 1}()
 	
 	for z = 1:runs
 		if z > 1 && vary_param
@@ -175,5 +178,5 @@ println("p stats")
 print_stats(samples)
 
 
-plot_sample_runs(sample_kls, , vary_samples)
+plot_sample_runs(sample_kls, interactions, vary_samples)
 plot_param_runs(learned)
