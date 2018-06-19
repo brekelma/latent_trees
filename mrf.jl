@@ -170,30 +170,35 @@ function pearl_sandwich(m::MRF)
 	else
 		samples = m.samples[1]
 	end
-	return pearl_sandwich(samples)
+	return pearl_sandwich_marginal(samples)
+	#return pearl_sandwich_full_cov(samples)
 end
 
-function pearl_sandwich{T <: Real}(samples::Array{T, 2})
+function pearl_sandwich_full_cov{T <: Real}(samples::Array{T, 2})
 	# calc rho_ij - rho_jk*rho_ik
 	rhos = Dict{Tuple, Float64}()
 	marginal = marginals(samples)
 	count = 0
 	pass = true
-	
+	rhos = covs(samples)
 	#for coupling in keys(m.params)
 		#if length(coupling) == 2
 	for count = 0:(size(samples)[2]-1)-1
 		i = count % 3 + 1
 		j = (count + 1) % 3 + 1
 		k = (count + 2) % 3 + 1
-		ik = sort_tuple((i,k))
-		ij = sort_tuple((i,j))
-		jk = sort_tuple((j,k))
-		rhos[(i,)] = sqrt(marginal[(i,)]*(1-marginal[(i,)]))
-		rhos[ij] = marginal[ij] - marginal[(i,)]*marginal[(j,)]
-		println("i: ", i, " ", marginal[(i,)], " j: ",  j, " ", marginal[(j,)], " k:", k, " ", marginal[(k,)]," ij: ", ij, " test: ", rhos[ij])
+		#ik = sort_tuple((i,k))
+		#ij = sort_tuple((i,j))
+		#jk = sort_tuple((j,k))
+		rhos[i,i] = sqrt(rhos[i,i]) #rhos[(i,)]  = sqrt(marginal[(i,)]*(1-marginal[(i,)]))
+		rhos[j,j] = sqrt(rhos[j,j])
+		rhos[i,j] = rhos[i,j]/(rhos[i,i]*rhos[j,j])#marginal[ij] - marginal[(i,)]*marginal[(j,)]
+		println("i: ", i, " ", marginal[(i,)], " j: ",  j, " ", marginal[(j,)], " k:", k, " ", marginal[(k,)], " test: ", rhos[i,j])
 		count = count + 1
 	end
+	println("RHOS ", rhos)
+	println("mult corr ", corrs(samples; pearson=false))
+	println("CORRS ", corrs(samples; pearson=true))
 	for count = 0:(size(samples)[2]-1)-1
 		i = count % 3 + 1
 		j = (count + 1) % 3 + 1
@@ -202,10 +207,64 @@ function pearl_sandwich{T <: Real}(samples::Array{T, 2})
 		ij = sort_tuple((i,j))
 		jk = sort_tuple((j,k))
 		ijk = sort_tuple((i,j,k))
-		lower_bound = marginal[ik]*marginal[ij]/marginal[(i,)]
-		triangle = rhos[(j,)]*rhos[(k,)]*(rhos[jk]-rhos[ij]*rhos[ik])
+		lower_bound = marginal[ik]*marginal[ij]/marginal[(i,)] #marginal[ik]*marginal[ij]/marginal[(i,)]
+		triangle = rhos[j,j]*rhos[k,k]*(rhos[j,k]-rhos[i,j]*rhos[i,k]) #rhos[(j,)]*rhos[(k,)]*(rhos[jk]-rhos[ij]*rhos[ik])
 		upper_bound = lower_bound + triangle
-		println("i: ", i, " j: ", j, " k:", k, " ij: ", ij, " triangle ", rhos[(j,)], rhos[(k,)], " rho diff ", rhos[jk]-rhos[ij]*rhos[ik])
+		println("i: ", i, " j: ", j, " k:", k, " ij: ", ij, " triangle ", sqrt(rhos[j,j]*rhos[k,k]), " rho diff ", rhos[j,k]-rhos[i,j]*rhos[i,k])
+
+		ind_fail = marginal[ijk] < lower_bound || marginal[ijk] > upper_bound
+		if ind_fail
+			pass = false
+		end
+
+		println("lower ", lower_bound, " IJK : ", marginal[ijk], " upper : ", upper_bound, ind_fail ? " FAIL": " ")
+	end
+	return pass, rhos, marginal
+	#min = minimum([v for k in keys(tests) for v in tests[k]])
+	#println("Pearl 3 Body Reconstruction Test ", min > 0 ? "SUCCEEDS" : "FAILS")
+	#println("Correlations Test ", rho[1,2]*rho[1,3]*rho[2,3] > 0 ? "SUCCEEDS" : "FAILS")
+	#return min, [rho[1,2],rho[1,3],rho[2,3]]
+end
+
+function pearl_sandwich_marginal{T <: Real}(samples::Array{T, 2})
+	# calc rho_ij - rho_jk*rho_ik
+	rhos = Dict{Tuple, Float64}()
+	marginal = marginals(samples)
+	count = 0
+	pass = true
+	#rhos = covs(samples)
+	#for coupling in keys(m.params)
+		#if length(coupling) == 2
+	println("marginal keys")
+	println([k for k in keys(marginal)])
+	for count = 0:(size(samples)[2]-1)-1
+		i = count % 3 + 1
+		j = (count + 1) % 3 + 1
+		k = (count + 2) % 3 + 1
+		ik = sort_tuple((i,k))
+		ij = sort_tuple((i,j))
+		jk = sort_tuple((j,k))
+		rhos[(i,)] = sqrt(marginal[(i,)]*(1-marginal[(i,)]))
+		rhos[(j,)] = sqrt(marginal[(j,)]*(1-marginal[(j,)]))
+		rhos[ij] = marginal[ij] - marginal[(i,)]*marginal[(j,)]
+		println("i: ", i, " ", marginal[(i,)], " j: ",  j, " ", marginal[(j,)], " k:", k, " ", marginal[(k,)], " test: ", rhos[ij])
+		count = count + 1
+	end
+	println("RHOS ", rhos)
+	println("mult corr ", corrs(samples; pearson=false))
+	println("CORRS ", corrs(samples; pearson=true))
+	for count = 0:(size(samples)[2]-1)-1
+		i = count % 3 + 1
+		j = (count + 1) % 3 + 1
+		k = (count + 2) % 3 + 1
+		ik = sort_tuple((i,k))
+		ij = sort_tuple((i,j))
+		jk = sort_tuple((j,k))
+		ijk = sort_tuple((i,j,k))
+		lower_bound = marginal[ik]*marginal[ij]/marginal[(i,)] #marginal[ik]*marginal[ij]/marginal[(i,)]
+		triangle = rhos[(j,)]*rhos[(k,)]*(rhos[jk]-rhos[ij]*rhos[ik]) #rhos[(j,)]*rhos[(k,)]*(rhos[jk]-rhos[ij]*rhos[ik])
+		upper_bound = lower_bound + triangle
+		println("i: ", i, " j: ", j, " k:", k, " ij: ", ij, " triangle ", sqrt(rhos[(j,)]*rhos[(k,)]), " rho diff ", rhos[jk]-rhos[ij]*rhos[ik])
 
 		ind_fail = marginal[ijk] < lower_bound || marginal[ijk] > upper_bound
 		if ind_fail

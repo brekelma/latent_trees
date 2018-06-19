@@ -57,7 +57,39 @@ function sort_tuple(t::Tuple)
 	return tuple(sort!([i for i in t])...)
 end
 
-function plot_model(m::MRF)
+function params_to_dict(final_params::Array{Any,1})
+	learned = Dict{Tuple, Array}()
+	for i = 1:length(final_params)
+		if !haskey(learned, final_params[i][1])
+			learned[final_params[i][1]]= Array{Float64,1}()
+		end 
+		append!(learned[final_params[i][1]], final_params[i][2])
+	end
+	return learned
+end
+
+
+function plot_param_runs(run_dict::Dict{Tuple, Array})
+	println("trying length")
+	key = [k for k in keys(run_dict)]
+	series_ones = [run_dict[k] for k in key if length(k)==1]
+	series_twos = [run_dict[k] for k in key if length(k)==1]
+	ones = length(series_ones)
+	twos = length(series_twos)
+	println("layouts")
+	l = @layout [ grid(ones,1) grid(twos,1) ]
+	println(l)
+	println([string(k[1]," ", length(k)>1 ? k[2] : "") for k in key if length(k) == 1])
+	println("vcat ones ", size(vcat(series_ones)))
+	left = plot( vcat(series_ones) , layout = grid(ones, 1), title = [string(k[1]," ", length(k)>1 ? k[2] : "") for k in key if length(k) == 1])
+	right = plot( vcat(series_twos) , layout = grid(twos, 1), title = [string(k[1]," ", length(k)>1 ? k[2] : "") for k in key if length(k) == 2])
+	lay = @layout [ a b ]
+	plot(left, right, layout=lay, legend=false)
+	#plot([ hcat(run_dict[i] for i in keys(run_dict)) ], layout = l, title = [ hcat([i for i in keys(run_dict)]) ]  )
+end
+
+
+function vis_mrf(m::MRF)
 	source = Array{Int64,1}()
 	dest = Array{Int64,1}()
 	weights = Array{Float64,1}()
