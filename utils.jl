@@ -4,7 +4,60 @@ using PlotRecipes
 include("mrf.jl")
 include("math.jl")
 
-function display_model(m::MRF)
+
+function random_init_q(d::Int, order::Int; field = true, range = 1, seed = 0)
+	tup = Dict{Tuple, Float64}()
+	tups = Array{Tuple, 1}()
+	#for i = 1:order
+		#append!(mat, Any[i:d])
+	#end
+	for i=1:d
+		if field
+			append!(tups, [(i,)])
+		end
+		if i != 4
+			append!(tups, [(i, 4)])
+		end
+	end	
+	for t in unique(tups) #product(mat...)
+		tup[t] = rand(range)[1] # seed
+	end 
+	return tup
+end
+
+function random_init_p(d::Int, order::Int; field = true, range = 1, seed = 0)
+	tup = Dict{Tuple, Float64}()
+	tups = Array{Tuple, 1}()
+	#for i = 1:order
+		#append!(mat, Any[i:d])
+	#end
+	for i=1:d
+		if field
+			append!(tups, [(i,)])
+		end
+		for j=(1+i):d
+			if order >=2
+				append!(tups, [sort_tuple((i,j))])
+			end
+			for k=(1+j):d
+				if order >= 3
+					append!(tups, [sort_tuple((i,j,k))])
+				end
+			end
+		end
+
+	end	
+	for t in unique(tups) #product(mat...)
+		tup[t] = rand(range)[1] # seed
+	end 
+	return tup
+end
+
+function sort_tuple(t::Tuple)
+	return tuple(sort!([i for i in t])...)
+end
+
+function plot_model(m::MRF)
 	source = Array{Int64,1}()
 	dest = Array{Int64,1}()
 	weights = Array{Float64,1}()
@@ -12,7 +65,7 @@ function display_model(m::MRF)
 	nodew = Array{Any,1}()
 
 	obs = size(m.samples[1])[2] - 1 - (isa(m, mrf) ? 0 : length(m.hsupport[1]))
-	println("OBSEVED", obs)
+	
 	_keys = [i for i in keys(m.params)]
 	sorted = _keys[sortperm([j[1] for j in _keys])]
 	sorted = sorted[sortperm([length(j) for j in sorted])]
@@ -77,6 +130,7 @@ function pprint2d{T <: Real}(arr::Array{T, 2})
 			print(round(arr[i,j], 4), "\t")
 		end
 	end
+	println()
 end
 
 
@@ -94,6 +148,7 @@ function print_stats{T <: Real}(samples::Array{T, 2})
 	cov = covs(samples)
 	corr = corrs(samples)
 	rho = corrs(samples, pearson = true)
+	_, pearl_rhos, _ = pearl_sandwich(samples)
 
 	println("mean spins ")
 	println(mean)
@@ -108,5 +163,10 @@ function print_stats{T <: Real}(samples::Array{T, 2})
 
 	println("corr coeff")
 	pprint2d(rho)
+
+	println("pearl corr")
+	for i in keys(pearl_rhos)
+		println(i, " : ", pearl_rhos[i])
+	end
 end
 

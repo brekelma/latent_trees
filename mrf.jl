@@ -1,6 +1,6 @@
 using Compat
 include("math.jl")
-
+export min_kl, min_kl_manual, emp_lld, dist_lld
 # CONVERT EVERYTHING TO MY TYPE?
 @compat abstract type MRF end
 
@@ -67,7 +67,7 @@ function emp_lld(m::MRF)
 	return sum(m.samples[1][k, 1]/sum(m.samples[1][:,1])*log_marginal[k] for k=1:size(m.samples[1])[1])
 end
 
-function avg_lld(m::MRF, dist::Array{Float64, 1})
+function dist_lld(m::MRF, dist::Array{Float64, 1})
 	data_evidence = sum(evidence(m), 2) # sum over hidden states
 	log_marginal = log(data_evidence) - log_partition(m)
 	return sum(dist[k]*log_marginal[k] for k=1:size(m.samples[1])[1])
@@ -85,7 +85,7 @@ end
 
 # can get rid of dist??
 function kl_dist(m1::MRF, m2::MRF, dist::Array{Float64, 1}; base::Real= exp(1))
-	return ln_convert(avg_lld(m1, dist) - avg_lld(m2, dist), base)
+	return ln_convert(dist_lld(m1, dist) - dist_lld(m2, dist), base)
 end
 
 
@@ -98,15 +98,10 @@ function gradient_xent(m::MRF; reversed=false)
 	end
 	# marginalizing over hiddens (unnecessary for reversed problem)
 	
-	evidences = evidence(m) # k x h
 	if !reversed
-		data_evidence = [sum(evidences[i]) for i=1:length(evidences)] # k x 1
-		
-		conditionals = evidences ./ data_evidence
-		# Conditional Expectation, ONLY WORKS FOR BINARY.... 
-		hiddens = [sum(conditionals[k][h]*m.hsupport[h] for h=1:length(m.hsupport)) for k=1:size(m.samples[1])[1]]
-		sample_exp = hcat(m.samples[1][:,1:size(m.samples[1])[2]-length(m.hsupport)+1], hiddens)
-	end
+		sample_exp = latent_expectation_samples(m)
+	end # runs evidences twice
+	evidences = evidence(m) # k x h
 	dist = [sum(evidences[i]) for i=1:length(evidences)] / exp(log_partition(m))
 	#println("DISTRIBUTION OVER DATA : ", dist, sum(dist))
 	#sum(evidences, length(size(evidences))) / exp(log_partition(m))
@@ -125,27 +120,130 @@ function gradient_xent(m::MRF; reversed=false)
 end
 
 
+function latent_expectation_samples(m::MRF)
+		evidences = evidence(m)
+		data_evidence = [sum(evidences[i]) for i=1:length(evidences)] # k x 1
+		
+		conditionals = evidences ./ data_evidence
+		# Conditional Expectation, ONLY WORKS FOR BINARY.... 
+		hiddens = [sum(conditionals[k][h]*m.hsupport[h] for h=1:length(m.hsupport)) for k=1:size(m.samples[1])[1]]
+		sample_exp = hcat(m.samples[1][:,1:size(m.samples[1])[2]-length(m.hsupport)+1], hiddens)
+		return sample_exp
+end
+
 function kl_gradient_ascent(m::MRF; step::Float64 = .001, reversed=false)
 	for coupling in keys(m.params)
 		m.params[coupling] = m.params[coupling] + step * gradient_xent(m)[coupling]
 	end
 end
 
-function pearl_corr_test(m::MRF)
-	# calc rho_ij - rho_jk*rho_ik
-	tests = Dict{Tuple, Float64}()
-	rho = corr(m.samples, pearson = true)
-	for coupling in m.params
-		if length(coupling) == 2
-			i = coupling[1]
-			j = coupling[2]
-			k = setdiff([ii for ii=1:m.dim],[i,j])
-			tests[coupling] = rho[i,j] - rho[i,k]*rho[j,k]
-			println("ij: ", coupling, " k:", k, " test: ", tests[coupling])
+function min_kl_manual(p::MRF, q::MRF; verbose = false)
+	kl_history = zeros(0)
+	# replace with gradient condition? #size(kl_history)[1] <= 1 || 
+	while size(kl_history)[1] <= 1 || abs(kl_history[end] - kl_history[end-1]) > tol 
+		#println("Entering while")
+		append!(kl_history, kl_empirical(p,q, base=2))
+		#println("gradient ascent")
+		kl_gradient_ascent(q, step = .01, reversed=false)
+		if verbose && size(kl_history)[1]%100== 0
+			println(" * Iter ", size(kl_history)[1], "* KL = ", kl_history[end])
 		end
 	end
-	min = minimum([v for v in tests[k] for k in keys(tests)])
+	println(" * Iter ", size(kl_history)[1], "* KL = ", kl_history[end])
+	println()
+	println("Final Params")
+	print_params(q.params)
+	return kl_history[end]
+end
+
+function min_kl(p::MRF, q::MRF; verbose = true)
+	kl_ = emp_lld(p) - max_lld(q, verbose = verbose)
+	println("Final KL divergence (bits): ", ln_convert(kl_, 2))
+	return ln_convert(kl_, 2)
+end 
+
+
+
+function pearl_sandwich(m::MRF)
+	if !isa(m, mrf)
+		samples = latent_expectation_samples(m)
+	else
+		samples = m.samples[1]
+	end
+	return pearl_sandwich(samples)
+end
+
+function pearl_sandwich{T <: Real}(samples::Array{T, 2})
+	# calc rho_ij - rho_jk*rho_ik
+	rhos = Dict{Tuple, Float64}()
+	marginal = marginals(samples)
+	count = 0
+	pass = true
+	
+	#for coupling in keys(m.params)
+		#if length(coupling) == 2
+	for count = 0:(size(samples)[2]-1)-1
+		i = count % 3 + 1
+		j = (count + 1) % 3 + 1
+		k = (count + 2) % 3 + 1
+		ik = sort_tuple((i,k))
+		ij = sort_tuple((i,j))
+		jk = sort_tuple((j,k))
+		rhos[(i,)] = sqrt(marginal[(i,)]*(1-marginal[(i,)]))
+		rhos[ij] = marginal[ij] - marginal[(i,)]*marginal[(j,)]
+		println("i: ", i, " ", marginal[(i,)], " j: ",  j, " ", marginal[(j,)], " k:", k, " ", marginal[(k,)]," ij: ", ij, " test: ", rhos[ij])
+		count = count + 1
+	end
+	for count = 0:(size(samples)[2]-1)-1
+		i = count % 3 + 1
+		j = (count + 1) % 3 + 1
+		k = (count + 2) % 3 + 1
+		ik = sort_tuple((i,k))
+		ij = sort_tuple((i,j))
+		jk = sort_tuple((j,k))
+		ijk = sort_tuple((i,j,k))
+		lower_bound = marginal[ik]*marginal[ij]/marginal[(i,)]
+		triangle = rhos[(j,)]*rhos[(k,)]*(rhos[jk]-rhos[ij]*rhos[ik])
+		upper_bound = lower_bound + triangle
+		println("i: ", i, " j: ", j, " k:", k, " ij: ", ij, " triangle ", rhos[(j,)], rhos[(k,)], " rho diff ", rhos[jk]-rhos[ij]*rhos[ik])
+
+		ind_fail = marginal[ijk] < lower_bound || marginal[ijk] > upper_bound
+		if ind_fail
+			pass = false
+		end
+
+		println("lower ", lower_bound, " IJK : ", marginal[ijk], " upper : ", upper_bound, ind_fail ? " FAIL": " ")
+	end
+	return pass, rhos, marginal
+	#min = minimum([v for k in keys(tests) for v in tests[k]])
+	#println("Pearl 3 Body Reconstruction Test ", min > 0 ? "SUCCEEDS" : "FAILS")
+	#println("Correlations Test ", rho[1,2]*rho[1,3]*rho[2,3] > 0 ? "SUCCEEDS" : "FAILS")
+	#return min, [rho[1,2],rho[1,3],rho[2,3]]
+end
+
+
+function pearl_corr_test(m::MRF)
+	if !isa(m, mrf)
+		samples = latent_expectation_samples(m)
+	else
+		samples = m.samples[1]
+	end
+
+	# calc rho_ij - rho_jk*rho_ik
+	tests = Dict{Tuple, Float64}()
+	rho = corrs(samples, pearson = true)
+	count = 0
+	for coupling in keys(m.params)
+		if length(coupling) == 2
+			i = count % 3 + 1
+			j = (count + 1) % 3 + 1
+			k = (count + 2) % 3 + 1
+			tests[coupling] = rho[i,j] - rho[i,k]*rho[j,k]
+			count = count + 1
+		end
+	end
+	min = minimum([v for k in keys(tests) for v in tests[k]])
 	println("Pearl 3 Body Reconstruction Test ", min > 0 ? "SUCCEEDS" : "FAILS")
-	println("min value ", min)
-	println("Correlations Test ", rho[i,j]*rho[i,k]*rho[j,k] > 0 ? "SUCCEEDS" : "FAILS")
+	println("Correlations Test ", rho[1,2]*rho[1,3]*rho[2,3] > 0 ? "SUCCEEDS" : "FAILS")
+	return min, [rho[1,2],rho[1,3],rho[2,3]]
 end
