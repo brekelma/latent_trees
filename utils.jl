@@ -89,6 +89,11 @@ function plot_param_runs(run_dict::Dict{Tuple, Array})
 end
 
 
+function plot_sample_runs(sample_kls::Array{Array, 1}, param_value::Array{Real, 1}, labels::Array{Any, 1})
+	plot(param_value, [kl for kl in sample_kls], label=[string(i) for i in labels] legend = true)
+	
+end
+
 function vis_mrf(m::MRF)
 	source = Array{Int64,1}()
 	dest = Array{Int64,1}()
