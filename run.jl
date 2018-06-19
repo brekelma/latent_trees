@@ -15,7 +15,7 @@ random_p = false
 # Vary 3 body strength?
 vary_param = true
 varied = (1,2,3)
-min_param = params[varied]
+
 
 runs = 10
 range3body = 2
@@ -46,13 +46,19 @@ function read_params(fn::String = "example.csv")#, fn_q::String = "q.csv"; verbo
 end
 
 params = read_params("example.csv")
-println(typeof(params))
+min_param = params[varied]
 
 sample_kls = Array{Any, 1}()
 
 for s = 1:length(vary_samples)
 	qq = Dict{Any, Any}()
 	q_params = Dict{Any, Any}()
+	
+	if !random_p
+		params = read_params("example.csv")
+		min_param = params[varied]
+	end
+	
 	for z = 1:runs
 		if z > 1 && vary_param
 			params[varied] = range3body / runs * z + min3
@@ -65,7 +71,9 @@ for s = 1:length(vary_samples)
 			params = random_init_p(d, order, field = q_field)
 			println("random p init ", [k for k in keys(params)])
 		end
-		append!(interactions, params[varied])
+		if s == 1
+			append!(interactions, params[varied])
+		end
 
 		if vary_inits
 			#if z == 1
@@ -166,4 +174,6 @@ println()
 println("p stats")
 print_stats(samples)
 
+
+plot_sample_runs(sample_kls, , vary_samples)
 plot_param_runs(learned)
