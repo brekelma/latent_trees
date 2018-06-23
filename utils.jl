@@ -1,6 +1,6 @@
 using CSV
 using PlotRecipes
-
+#import PyPlot
 include("mrf.jl")
 include("math.jl")
 
@@ -69,29 +69,102 @@ function params_to_dict(final_params::Array{Any,1})
 end
 
 
-function plot_param_runs(run_dict::Dict{Tuple, Array})
-	println("trying length")
+function plot_param_runs(run_dict::Dict{Tuple,Array{Any,1}}, param_values::Array{Any, 1} = []; param_name::String="", title::String="", reverse = false)
+	#fig_size = 
+	if isempty(param_values)
+		x_lbl = "random initialization #"
+		k = collect(keys(run_dict))[1]
+		param_values = [i for i=1:length(run_dict[k])]
+		inits = true
+	else
+		inits = false
+		x_lbl = string("param value ", param_name)
+	end
+	mrk = 2
+	fnt = 10
+	
 	key = [k for k in keys(run_dict)]
-	series_ones = [run_dict[k] for k in key if length(k)==1]
-	series_twos = [run_dict[k] for k in key if length(k)==1]
-	ones = length(series_ones)
-	twos = length(series_twos)
-	println("layouts")
+	idx_ones = [k for k in key if length(k)==1]
+	idx_twos = [k for k in key if length(k)==2]
+	ones = length(idx_ones)
+	twos = length(idx_twos)
+	
 	l = @layout [ grid(ones,1) grid(twos,1) ]
-	println(l)
-	println([string(k[1]," ", length(k)>1 ? k[2] : "") for k in key if length(k) == 1])
-	println("vcat ones ", size(vcat(series_ones)))
-	left = plot( vcat(series_ones) , layout = grid(ones, 1), title = [string(k[1]," ", length(k)>1 ? k[2] : "") for k in key if length(k) == 1])
-	right = plot( vcat(series_twos) , layout = grid(twos, 1), title = [string(k[1]," ", length(k)>1 ? k[2] : "") for k in key if length(k) == 2])
+	series_ones = [run_dict[i] for i in idx_ones]
+	series_twos = [run_dict[i] for i in idx_twos]
+	# arg sort
+	# if sortit
+	# 	s1 = sortperm(series_ones)
+	# 	s2 = sortperm(series_twos)
+	# 	series_ones = series_ones[s1]
+	# 	series_two = series_twos[s2]
+	# 	param_values1 = param_value[s1]
+	# 	param_values2 = param_value[s2]
+	# end
+
+	left = scatter( param_values, vcat(inits ? [sort(i) for i in series_ones] : series_ones) , layout = grid(ones, 1), title = hcat([string(i[1], ", ") for i in idx_ones]...), markersize = mrk, titlefont = font(fnt))
+	right = scatter( param_values, vcat(inits ? [sort(i) for i in series_twos] : series_twos) , layout = grid(twos, 1), title = hcat([string("(", i[1], ", ", i[2],")") for i in idx_twos]...), markersize = mrk, titlefont = font(fnt))
 	lay = @layout [ a b ]
-	plot(left, right, layout=lay, legend=false)
+	#title =  string("Learned ", reverse ? "P" : "Q", " Params by ", inits ? "Init" : string("Parameter ", param_name))
+	scatter(left, right, layout=lay, legend=false, reuse = false)
+	#PyPlot.suptitle(string("Learned ", reverse ? "P" : "Q", " Params by ", inits ? "Init" : string("Parameter ", param_name)))
+	#PyPlot.savefig("param_runs.pdf")
+	savefig(string("param_runs", title, ".pdf"))
+	#display(plt)
 	#plot([ hcat(run_dict[i] for i in keys(run_dict)) ], layout = l, title = [ hcat([i for i in keys(run_dict)]) ]  )
 end
 
+#function plot_param_variance(learned_params::Dict{Tuple,Array})
+#	plot_param_variance(learned_params)
+#end
 
-function plot_sample_runs(sample_kls::Array{Array, 1}, param_value::Array{Real, 1}, labels::Array{Any, 1})
-	plot(param_value, [kl for kl in sample_kls], label=[string(i) for i in labels] legend = true)
+function plot_param_variance(learned_params::Dict{Real, Dict{Tuple,Array{Any, 1}}})
+	nsamples = collect(keys(learned_params))
+ 	x_params = collect(keys(learned_params[nsamples[1]]))
+ 	println("x params ", x_params)
+ 	println("num_samples ", typeof(nsamples), nsamples)
+	for n in keys(learned_params)
+		# plot each?
+		#series = vcat[learned_params[n]
+	end
+
+end
+
+
+# function plot_sample_runs{T <: Real, S <: Real}(sample_kls::Dict{T, Array{Any, 1}}, param_value::Array{S, 1}, param_name::String = ""; slacks::Any = [])
+# 	labels = collect(keys(sample_kls))
+# 	sample_kls = [sample_kls[i] for i in keys(sample_kls)]
+# 	println(size(sample_kls), [size(sample_kls[i]) for i =1:length(sample_kls)])
+# 	if isempty(param_name)
+# 		xlab = "run" 
+# 	else 
+# 		xlab = string("param value ", param_name)
+# 	end
+# 	if isempty(slacks)
+# 		plot(param_value, [kl for kl in sample_kls], label=[string(i, " samples") for i in labels], title = string("KL Divergence by Sample / Parameter ", param_name), xlabel = xlab, legend = true, reuse = false, show = true)
+# 	else
+# 		plot(param_value, [kl for kl in sample_kls], label=[string(i, " samples") for i in labels], title = string("KL Divergence by Sample / Parameter ", param_name), xlabel = xlab, legend = true, reuse = false, show = true)
+# 	end
+# 	plot(param_value, slacks)#label=[string(i, " samples") for i in labels], title = string("KL Divergence by Sample / Parameter ", param_name), xlabel = xlab, legend = true, reuse = false, show = true)
+# 	savefig("sample_runs.pdf")
+# end
+
+
+# let sample_kls be a dictionary
+function plot_sample_runs{T <: Real, S <: Real}(sample_kls::Dict{T, Array{Any, 1}}, param_value::Array{S, 1}, param_name::String = "")
+	labels = collect(keys(sample_kls))
+	sample_kls = [sample_kls[i] for i in keys(sample_kls)]
+	println(size(sample_kls), [size(sample_kls[i]) for i =1:length(sample_kls)])
+	if isempty(param_name)
+		xlab = "run" 
+	else 
+		xlab = string("param value ", param_name)
+	end
+	#xlabel = xlab, #", param_name
+	println("try plot")
+	plot(param_value, [kl for kl in sample_kls], label=[string(string(i), " samples") for i in labels], title = string("KL Divergence by Sample / Parameter "), legend = true, reuse = false)
 	
+	savefig("sample_runs.pdf")
 end
 
 function vis_mrf(m::MRF)
@@ -185,7 +258,7 @@ function print_stats{T <: Real}(samples::Array{T, 2})
 	cov = covs(samples)
 	corr = corrs(samples)
 	rho = corrs(samples, pearson = true)
-	_, pearl_rhos, _ = pearl_sandwich(samples)
+	_, pearl_rhos, _ = pearl_sandwich_full_cov(samples)
 
 	println("mean spins ")
 	println(mean)

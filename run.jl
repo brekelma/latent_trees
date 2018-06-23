@@ -4,33 +4,34 @@ using CSV
 include("utils.jl")
 include("mrf.jl")
 include("ipopt.jl")
-num_samp = 10000000
-vary_samples = [100000]
+
+vary_samples = [1000000]
 tol = .00001
 verbose = false
 ipopt = true
-q_field = true 
-random_p = false
+field = true
 
 # Vary 3 body strength?
-vary_param = true
+vary_param = false
 varied = (1,2,3)
 
 
-runs = 10
-range3body = 2
+runs = 2
+range_param = 2
 # Vary inits to test convexity? 
-vary_inits = true #false
+vary_inits = true
 # KL(q||p)? best 3 body for given tree
 reverse = false
 
 samples = Array{Real,2}
-kls = Array{Float64, 1}()
 final_params = Array{Any, 1}()
+init_params = Array{Any, 1}()
 
+kls = Array{Float64, 1}()
 #if vary_3_body
 interactions = Array{Float64, 1}()
 triangle_test = Array{Any, 1}()
+triangle_slack = Array{Any, 1}()
 corr_test = Array{Any, 1}()
 #end
 
@@ -48,50 +49,66 @@ end
 params = read_params("example.csv")
 min_param = params[varied]
 
-sample_kls = Array{Any, 1}()
+sample_kls = Dict{Real, Array{Any, 1}}()
+learned_params = Dict{Real, Dict{Tuple, Array{Any, 1}}}()
+inits = Dict{Real, Dict{Tuple, Array{Any, 1}}}()
 
 for s = 1:length(vary_samples)
-	qq = Dict{Any, Any}()
-	q_params = Dict{Any, Any}()
 	
-	if !random_p
+	q_params = Dict{Any, Any}()
+	num_samp = vary_samples[s]
+
+	if !(vary_inits && reverse)
 		params = read_params("example.csv")
 		min_param = params[varied]
 	end
+	kls = Array{Float64, 1}()
 	interactions = Array{Float64, 1}()
 	triangle_test = Array{Any, 1}()
 	corr_test = Array{Any, 1}()
 	
 	for z = 1:runs
 		if z > 1 && vary_param
-			params[varied] = range3body / runs * z + min3
+			params[varied] = range_param / runs * z + min_param
 			#println("run ", z, ": ",params[(1,2,3)])
 		end
 
 		d =  maximum([i for theta in keys(params) for i in theta])
 		order = maximum([length(i) for i in keys(params)])
-		if random_p
-			params = random_init_p(d, order, field = q_field)
-			println("random p init ", [k for k in keys(params)])
-		end
-		if s == 1
-			append!(interactions, params[varied])
+		if reverse && vary_inits
+			params = random_init_p(d, order, field = field)
+			append!(init_params, params)
+			#inits[vary_samples[s]] = params_to_dict(params)
 		end
 
-		if vary_inits
+		if vary_inits && !reverse
 			#if z == 1
-		#		q_params = random_init(d+1, order, field = q_field)
+		#		q_params = random_init(d+1, order, field = field)
 		#	else
 		#		for i in keys(q_params)
 	#				q_params[i] = q_params[i]*-1
 	#			end
 	#		end
 			# back to normal
-			q_params = random_init_q(d+1, order, field = q_field)
+			q_params = random_init_q(d+1, order, field = field)
+			append!(init_params, q_params)
+			#inits[vary_samples[s]] = params_to_dict(q_params)
+		elseif vary_param && reverse
+			q_params = read_params("example.csv")
+			if z== 1
+				min_param = q_params[varied]
+			end
+			q_params[varied] = range_param / runs * z + min_param
 		else
+			#println("constat q init")
 			q_params = read_params("q.csv")
 		end
 
+		if vary_param && !reverse
+			append!(interactions, params[varied])
+		elseif vary_param && reverse
+			append!(interactions, q_params[varied])
+		end
 
 		# hack for hidden
 
@@ -121,24 +138,26 @@ for s = 1:length(vary_samples)
 		end
 
 		if !reverse
-			recoverable, correlations, marginal = pearl_sandwich(p)
+			recoverable, correlations, marginal, slack = pearl_sandwich(p)
 			#min_corr, correlations = pearl_corr_test(p)
 		end
 
 		kl = 0
 		if ipopt 
 			if reverse
-				kl = min_kl(q, p)
+				kl = min_kl(q, p, verbose = verbose)
 			else
-				kl = min_kl(p, q)
+				kl = min_kl(p, q, verbose = verbose)
 			end
 		else
 			kl = min_kl_manual(p, q, verbose = verbose)
 		end
 		append!(kls, kl)
-		
-		append!(triangle_test, recoverable)
-		append!(corr_test, [Array([correlations[1,2], correlations[2,3], correlations[1,3]])])
+		if !reverse
+			append!(triangle_test, recoverable)
+			append!(corr_test, [Array([correlations[1,2], correlations[2,3], correlations[1,3]])])
+			append!(triangle_slack, slack)
+		end
 		#append!(triangle_test, min_corr)
 		#append!(corr_test, correlations)
 
@@ -146,37 +165,68 @@ for s = 1:length(vary_samples)
 			append!(final_params, p.params)
 		else
 			append!(final_params, q.params)
+			if z % 100 ==0
+				println(q.params)
+			end
 		end
 	end
-	append!(sample_kls, kls)
+	sample_kls[vary_samples[s]] = kls
+	learned_params[vary_samples[s]] = params_to_dict(final_params) #[params_to_dict(final_param) for final_param in final_params]
+	inits[vary_samples[s]] = params_to_dict(init_params)
 end
 #vis_mrf(q)
 
+println("out of loop")
 println()
-println()
-println("3 Body Couplings")
-println(interactions)
-println()
-
-if vary_inits
-	learned = params_to_dict(final_params)
-	println()
-	println("parameter variance")
+if vary_param
+	println("3 Body Couplings")
+	println(interactions)
+end
+#println(length(learned_params))
+init = Dict{Tuple, Array{Any, 1}}
+learned = Dict{Tuple,Array{Any,1}}
+#if vary_inits
+for s in 1:length(learned_params)
+	learned = learned_params[vary_samples[s]]
+	if vary_inits
+		init = inits[vary_samples[s]]
+	end
+	#println()
+	#println("size learned ", length(learned))
+	#println("parameter variance")
 	for i in keys(learned)
-		println(i, " : ", var(learned[i]))
+		println("learned ", i, "variance")
+		#println(learned[i])
+		#println(i, " : ", var(learned[i]))
 	end
 end
 println("objective")
 println("mean: ", round(mean(kls), 4), "    variance: ", var(kls))
 println("kl min ", minimum(kls), " kl max ", maximum(kls))
 println()
-println("Pearl Test")
-println([(kls[i], triangle_test[i] && prod(corr_test[i])>0, sum(corr_test[i][k] > 0 for k=1:length(corr_test[i])))  for i=1:length(triangle_test)])
+if !reverse
+	#sum(corr_test[i][k] > 0 for k=1:length(corr_test[i]))) 
+	println("Pearl Test")
+	for i = 1:length(triangle_test)
+		println((kls[i], triangle_test[i] && prod(corr_test[i])>0, round(triangle_slack[i],3)))
+	end
+end
 
 println()
-println("p stats")
+#println("p stats")
+#
+println(typeof(sample_kls))
+plot_sample_runs(sample_kls, interactions, "")#; slacks = triangle_slack)
+#plot_param_variance(learned_params)
+if vary_param
+	plot_param_runs(learned, interactions, "")
+else
+	plot_param_runs(learned, [], "")
+end
+if vary_inits
+	plot_param_runs(learned, [], "")
+end
+
+println(samples)
+println()
 print_stats(samples)
-
-
-plot_sample_runs(sample_kls, interactions, vary_samples)
-plot_param_runs(learned)

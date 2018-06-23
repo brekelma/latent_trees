@@ -61,14 +61,14 @@ function max_lld(m::MRF; verbose = true, constrain_triangle = false, constrain_c
 
 	status = solve(opt)
 	optimized = deepcopy(getvalue(params))
-	if verbose
-		println()
-		println("Optimized Parameters")
-		for i in 1:n_keys
-			m.params[index_map[i]] = optimized[i]
-			println(index_map[i], ": ", round(m.params[index_map[i]],3))
-		end
+	#if verbose
+#		println()
+#		println("Optimized Parameters")
+	for i in 1:n_keys
+		m.params[index_map[i]] = optimized[i]
+		println(index_map[i], ": ", round(m.params[index_map[i]],3))
 	end
+	#end
 
 	d = JuMP.NLPEvaluator(opt)
 	MathProgBase.initialize(d, [:Grad])

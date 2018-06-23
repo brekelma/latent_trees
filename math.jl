@@ -50,7 +50,7 @@ function covs{T <: Real}(samples::Array{T, 2})
 
 	# p_ij - p_i p_j for all 
 	cov = [sum(samples[k,1]/num_samp*(samples[k,1+i]-mu[i])*(samples[k,1+j]-mu[j]) for k=1:num_conf) for i=1:d, j=1:d]
-	
+	#cov = [sum(samples[k,1]/num_samp*(samples[k,1+i]*samples[k,1+j]-mu[i]*mu[j]) for k=1:num_conf) for i=1:d, j=1:d]
 	return cov
 end
 
