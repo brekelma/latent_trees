@@ -1,11 +1,26 @@
-using CSV
-using PlotRecipes
-#import PyPlot
+#using PyPlot
 include("mrf.jl")
 include("math.jl")
+using PlotRecipes
+#using Graphs
+using GraphPlot
+using LightGraphs, SimpleWeightedGraphs
+using Colors
+using Compose
 
+function matlab_samples{T <: Real}(samples::Array{T, 2})
+	matlab_samples = Array{T,2}()
+	for k = 1:size(samples)[1]
+		println(samples[k,1])
+		samps = hcat([samples[k, 2:end] for i=1:samples[k,1]]...)
+		println("samps ", size(samps), " matlab ", size(matlab_samples))
+		matlab_samples = isempty(matlab_samples) ? samps : hcat(matlab_samples, samps)
+	end
+	println("total size : ", size(matlab_samples))
+	return matlab_samples
+end
 
-function random_init_q(d::Int, order::Int; field = true, range = 1, seed = 0)
+function random_init_tree_3(d::Int, order::Int; field = true, range = [0,1], seed = 0)
 	tup = Dict{Tuple, Float64}()
 	tups = Array{Tuple, 1}()
 	#for i = 1:order
@@ -20,12 +35,12 @@ function random_init_q(d::Int, order::Int; field = true, range = 1, seed = 0)
 		end
 	end	
 	for t in unique(tups) #product(mat...)
-		tup[t] = rand(range)[1] # seed
+		tup[t] = rand()[1]*range[end]+range[1] # seed
 	end 
 	return tup
 end
 
-function random_init_p(d::Int, order::Int; field = true, range = 1, seed = 0)
+function random_init_p(d::Int, order::Int; field = true, range = [0,1], seed = 0)
 	tup = Dict{Tuple, Float64}()
 	tups = Array{Tuple, 1}()
 	#for i = 1:order
@@ -48,7 +63,7 @@ function random_init_p(d::Int, order::Int; field = true, range = 1, seed = 0)
 
 	end	
 	for t in unique(tups) #product(mat...)
-		tup[t] = rand(range)[1] # seed
+		tup[t] = rand()[1]*range[end]+range[1] # seed
 	end 
 	return tup
 end
@@ -68,8 +83,12 @@ function params_to_dict(final_params::Array{Any,1})
 	return learned
 end
 
+#function plot_param_runs(run_dict::Dict{Tuple,Array{Any,1}}, param_values::Array{Any, 1} = [], param_name::String=""; title::String="", reverse = false)
+#	plot_param_runs(run_dict, float(param_values), param_name, title = title, reverse = reverse)
+#end
 
-function plot_param_runs(run_dict::Dict{Tuple,Array{Any,1}}, param_values::Array{Any, 1} = []; param_name::String="", title::String="", reverse = false)
+
+function plot_param_runs(run_dict::Dict{Tuple,Array{Any,1}}, param_values::Array{Float64, 1} = [], param_name::String=""; title::String="", reverse = false)
 	#fig_size = 
 	if isempty(param_values)
 		x_lbl = "random initialization #"
@@ -152,6 +171,7 @@ end
 
 # let sample_kls be a dictionary
 function plot_sample_runs{T <: Real, S <: Real}(sample_kls::Dict{T, Array{Any, 1}}, param_value::Array{S, 1}, param_name::String = "")
+	#pyplot()
 	labels = collect(keys(sample_kls))
 	sample_kls = [sample_kls[i] for i in keys(sample_kls)]
 	println(size(sample_kls), [size(sample_kls[i]) for i =1:length(sample_kls)])
@@ -161,11 +181,69 @@ function plot_sample_runs{T <: Real, S <: Real}(sample_kls::Dict{T, Array{Any, 1
 		xlab = string("param value ", param_name)
 	end
 	#xlabel = xlab, #", param_name
-	println("try plot")
+	println("try plot", " labels ", labels, " sample_kls ", length(sample_kls))
 	plot(param_value, [kl for kl in sample_kls], label=[string(string(i), " samples") for i in labels], title = string("KL Divergence by Sample / Parameter "), legend = true, reuse = false)
-	
 	savefig("sample_runs.pdf")
 end
+
+function display_factor(m::MRF)
+	_display_factor(m.params, m.dim)
+end
+function display_factor(m::FactorGraph)
+	_display_factor(m.terms, m.variable_count)
+end
+function display_factor{T <: Real }(params::Dict{Tuple, T})
+	dim = maximum([i for theta in keys(params) for i in theta])
+	_display_factor(params, dim)
+end
+function _display_factor{T <: Real}(params::Dict{Tuple, T}, dim::Int64)
+
+	nodelabels = zeros(dim)
+	g = SimpleWeightedGraph(dim) #simple_graph(m.dim, is_directed = false)
+	v = collect(LightGraphs.vertices(g))
+	#wedges = Array{Any, 1}()
+	for coupling in keys(params)
+		
+		sort_tuple(coupling)
+		if length(coupling) == 1
+			nodelabels[coupling[1]] = params[coupling]
+		elseif length(coupling) == 2
+			LightGraphs.add_edge!(g, v[coupling[1]], v[coupling[2]], params[coupling])
+			#append!(wedges, [we])
+		else
+			str_name = "factor_"
+			for i =1:length(coupling)
+				str_name = string(str_name, string(coupling[i]))
+			end
+			LightGraphs.add_vertex!(g)#, str_name)
+			v_ind = nv(g)
+			for i =1:length(coupling)
+				LightGraphs.add_edge!(g, v[coupling[i]], v_ind, params[coupling])
+			end
+			append!(nodelabels, [params[coupling]])
+		end
+	end
+	node_fill = []
+	for i=1:length(nodelabels)
+		if i < dim
+			node_fill[i] = append!(node_fill, [distinguishable_colors(3)[1]])
+		else
+			node_fill[i] = append!(node_fill, [distinguishable_colors(3)[2]])
+		end
+	end
+	weights = zeros(ne(g))
+	i = 0
+	for wedge in LightGraphs.edges(g)
+		i = i+1
+		weights[i] = round(weight(wedge), 2)
+		#weights[edge_index(wedge.edge, g)] = wedge.weight
+	end #nodefillc = node_fill,
+	nodelabels = [round(n, 2) for n in nodelabels]
+	draw(PNG("learned_graph.png", 8cm, 8cm),gplot(g,  nodelabel = nodelabels, edgelabel = weights)) 
+	#gplot(g, nodefillc = node_fill, nodelabel = nodelabels, edgelabel = weights)
+end
+
+
 
 function vis_mrf(m::MRF)
 	source = Array{Int64,1}()
@@ -205,20 +283,18 @@ function vis_mrf(m::MRF)
 end
 
 
-function read_params(fn::String, delim="\t")
-	df = CSV.read(fn; delim = "\t", header=0, types = [String, Float64], nullable = false)
+function read_params(fn::String; rand_init = false, range = [-1, 1], delim="\t", datarow = 2)
+    df = CSV.read(fn; delim = delim, header=0, datarow = datarow, types = [String, Float64], allowmissing =:none)
 	splits = [split(df[r,1],',', keep = false) for r=1:size(df)[1]]
 	params = Dict{Tuple, Float64}()
 	for r=1:size(df)[1]
-		params[tuple([parse(Int64, splits[r][i]) for i=1:length(splits[r])]...)] = df[r,2]
-	#println("Key: ", tuple(parse(Int64, split(df[r,1],',', keep = false)[i]) for i=1:edge_orders[r]))
+		if rand_init
+			params[tuple([parse(Int64, splits[r][i]) for i=1:length(splits[r])]...)] = rand()[1]*range[end]+range[1]
+		else
+			params[tuple([parse(Int64, splits[r][i]) for i=1:length(splits[r])]...)] = df[r,2]
+		end
 	end
-end
-
-# PARAMS only... also add rand / copy instructions to the csv?
-function read_params(fn::String, delim="\t")
-	df = CSV.read(fn; delim = delim, header=0, types = [String, Float64], nullable = false)
-	return df
+	return params
 end
 
 function print_params{T <: Real}(dict::Dict{Tuple, T})
@@ -274,9 +350,9 @@ function print_stats{T <: Real}(samples::Array{T, 2})
 	println("corr coeff")
 	pprint2d(rho)
 
-	println("pearl corr")
-	for i in keys(pearl_rhos)
-		println(i, " : ", pearl_rhos[i])
-	end
+	#println("pearl corr")
+	#for i in keys(pearl_rhos)
+	#	println(i, " : ", pearl_rhos[i])
+	#end
 end
 

@@ -1,5 +1,5 @@
-using GraphicalModelLearning
 using CSV
+using GraphicalModelLearning
 
 include("utils.jl")
 include("mrf.jl")
@@ -16,14 +16,14 @@ vary_param = false
 varied = (1,2,3)
 
 
-runs = 2
-range_param = 2
+runs = 5
+range_param = 4
 # Vary inits to test convexity? 
 vary_inits = true
 # KL(q||p)? best 3 body for given tree
 reverse = false
 
-samples = Array{Real,2}
+samples = Array{Real,2}()
 final_params = Array{Any, 1}()
 init_params = Array{Any, 1}()
 
@@ -31,31 +31,22 @@ kls = Array{Float64, 1}()
 #if vary_3_body
 interactions = Array{Float64, 1}()
 triangle_test = Array{Any, 1}()
-triangle_slack = Array{Any, 1}()
+#triangle_slack = Array{Any, 1}()
+triangle_slack = Array{Array{Any,1}, 1}()
 corr_test = Array{Any, 1}()
 #end
 
-function read_params(fn::String = "example.csv")#, fn_q::String = "q.csv"; verbose = false, ipopt = true)
-	df = CSV.read(fn; delim = "\t", header=0, types = [String, Float64], nullable = false)
-	splits = [split(df[r,1],',', keep = false) for r=1:size(df)[1]]
-	param = Dict{Tuple, Float64}()
-	for r=1:size(df)[1]
-		param[tuple([parse(Int64, splits[r][i]) for i=1:length(splits[r])]...)] = df[r,2]
-		#println("Key: ", tuple(parse(Int64, split(df[r,1],',', keep = false)[i]) for i=1:edge_orders[r]))
-	end
-	return param
-end
 
 params = read_params("example.csv")
 min_param = params[varied]
 
+q_params = Dict{Tuple, Float64}()
 sample_kls = Dict{Real, Array{Any, 1}}()
 learned_params = Dict{Real, Dict{Tuple, Array{Any, 1}}}()
 inits = Dict{Real, Dict{Tuple, Array{Any, 1}}}()
 
 for s = 1:length(vary_samples)
-	
-	q_params = Dict{Any, Any}()
+	q_params = Dict{Tuple, Float64}()
 	num_samp = vary_samples[s]
 
 	if !(vary_inits && reverse)
@@ -90,7 +81,7 @@ for s = 1:length(vary_samples)
 	#			end
 	#		end
 			# back to normal
-			q_params = random_init_q(d+1, order, field = field)
+			q_params = random_init_tree_3(d+1, order, field = field)
 			append!(init_params, q_params)
 			#inits[vary_samples[s]] = params_to_dict(q_params)
 		elseif vary_param && reverse
@@ -138,7 +129,7 @@ for s = 1:length(vary_samples)
 		end
 
 		if !reverse
-			recoverable, correlations, marginal, slack = pearl_sandwich(p)
+			recoverable, correlations, marginal, slack, slack_l = pearl_sandwich(p)
 			#min_corr, correlations = pearl_corr_test(p)
 		end
 
@@ -156,8 +147,10 @@ for s = 1:length(vary_samples)
 		if !reverse
 			append!(triangle_test, recoverable)
 			append!(corr_test, [Array([correlations[1,2], correlations[2,3], correlations[1,3]])])
-			append!(triangle_slack, slack)
+			#append!(triangle_slack, slack)
+			append!(triangle_slack, [slack_l])
 		end
+		println("SLACK L ", slack_l)
 		#append!(triangle_test, min_corr)
 		#append!(corr_test, correlations)
 
@@ -169,7 +162,11 @@ for s = 1:length(vary_samples)
 				println(q.params)
 			end
 		end
+		if z % 10 == 0
+			println("Learned params ", q.params)
+		end
 	end
+	
 	sample_kls[vary_samples[s]] = kls
 	learned_params[vary_samples[s]] = params_to_dict(final_params) #[params_to_dict(final_param) for final_param in final_params]
 	inits[vary_samples[s]] = params_to_dict(init_params)
@@ -221,12 +218,28 @@ plot_sample_runs(sample_kls, interactions, "")#; slacks = triangle_slack)
 if vary_param
 	plot_param_runs(learned, interactions, "")
 else
-	plot_param_runs(learned, [], "")
+	plot_param_runs(learned, Array{Float64,1}(), "")
 end
 if vary_inits
-	plot_param_runs(learned, [], "")
+	plot_param_runs(learned, Array{Float64,1}(), "")
 end
 
-println(samples)
+
 println()
 print_stats(samples)
+println()
+println(samples)
+println()
+println("marginals")
+m = marginals(samples)
+for k in keys(m)
+	println(k, " : ", m[k])
+end
+
+
+println("*** Learned Q Corrs ***")
+dh = maximum([i for theta in keys(q_params) for i in theta])
+order = maximum([length(i) for i in keys(q_params)])
+modelq = FactorGraph(order, dh, :spin, q_params)
+samples_q = sample(modelq, vary_samples[end])
+print_stats(samples_q)

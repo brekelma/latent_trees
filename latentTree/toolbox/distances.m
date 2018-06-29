@@ -14,7 +14,8 @@ for i=1:d
         p(2,2) = sum((samples(i, :) == 1).*(samples(j,:) == 1))/n;
         pi = sum((samples(i, :) == 1))/n;
         pj = sum((samples(j, :) == 1))/n;
-        corr = p(1,1) - (1-pi)*(1-pj) - p(2,1) - (pi*(1-pj)) - p(1,2) - (1-pi)*pj + p(2,2) - (1-pi)*(1-pj);
+        corr = p(2,2) - pi*pj; % p(1,1)-p(2,1)-p(1,2)+p(2,2); % E(Xi Xj)
+        %corr = p(1,1) - (1-pi)*(1-pj) - p(2,1) - (pi*(1-pj)) - p(1,2) - (1-pi)*pj + p(2,2) - (1-pi)*(1-pj);
         corr = corr/sqrt((pi*(1-pi)*pj*(1-pj)));
         dist(i,j) = -log(abs(corr));
         dist(j,i) = -log(abs(corr));
