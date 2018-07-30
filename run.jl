@@ -14,14 +14,14 @@ field = true
 # Vary 3 body strength?
 vary_param = false
 varied = (1,2,3)
+rand_init = false
 
-
-runs = 5
+runs = 5#10000
 range_param = 4
 # Vary inits to test convexity? 
-vary_inits = true
+vary_inits = false
 # KL(q||p)? best 3 body for given tree
-reverse = false
+reverse = true
 
 samples = Array{Real,2}()
 final_params = Array{Any, 1}()
@@ -35,8 +35,9 @@ triangle_test = Array{Any, 1}()
 triangle_slack = Array{Array{Any,1}, 1}()
 corr_test = Array{Any, 1}()
 #end
-
-
+z =0
+p = mrf()
+q = mrf()
 params = read_params("example.csv")
 min_param = params[varied]
 
@@ -66,6 +67,7 @@ for s = 1:length(vary_samples)
 
 		d =  maximum([i for theta in keys(params) for i in theta])
 		order = maximum([length(i) for i in keys(params)])
+
 		if reverse && vary_inits
 			params = random_init_p(d, order, field = field)
 			append!(init_params, params)
@@ -85,6 +87,7 @@ for s = 1:length(vary_samples)
 			append!(init_params, q_params)
 			#inits[vary_samples[s]] = params_to_dict(q_params)
 		elseif vary_param && reverse
+			#q_params = read_params("q.csv"; rand_init = rand_init, field = true)
 			q_params = read_params("example.csv")
 			if z== 1
 				min_param = q_params[varied]
@@ -92,7 +95,7 @@ for s = 1:length(vary_samples)
 			q_params[varied] = range_param / runs * z + min_param
 		else
 			#println("constat q init")
-			q_params = read_params("q.csv")
+			q_params = read_params("q.csv", rand_init = rand_init, field = true)
 		end
 
 		if vary_param && !reverse
@@ -137,6 +140,7 @@ for s = 1:length(vary_samples)
 		if ipopt 
 			if reverse
 				kl = min_kl(q, p, verbose = verbose)
+				#alt_kl = min_kl(p, q, verbose = verbose)
 			else
 				kl = min_kl(p, q, verbose = verbose)
 			end
@@ -150,7 +154,6 @@ for s = 1:length(vary_samples)
 			#append!(triangle_slack, slack)
 			append!(triangle_slack, [slack_l])
 		end
-		println("SLACK L ", slack_l)
 		#append!(triangle_test, min_corr)
 		#append!(corr_test, correlations)
 
@@ -162,8 +165,8 @@ for s = 1:length(vary_samples)
 				println(q.params)
 			end
 		end
-		if z % 10 == 0
-			println("Learned params ", q.params)
+		if kl < .02
+			break
 		end
 	end
 	
@@ -173,11 +176,15 @@ for s = 1:length(vary_samples)
 end
 #vis_mrf(q)
 
-println("out of loop")
-println()
+println("AFTER ", z , ", runs ")
 if vary_param
 	println("3 Body Couplings")
 	println(interactions)
+	if reverse
+		for k in keys(q.params)
+			println(k, ": ", q.params[k])
+		end
+	end
 end
 #println(length(learned_params))
 init = Dict{Tuple, Array{Any, 1}}
@@ -213,12 +220,13 @@ println()
 #println("p stats")
 #
 println(typeof(sample_kls))
-plot_sample_runs(sample_kls, interactions, "")#; slacks = triangle_slack)
+#plot_sample_runs(sample_kls, interactions, "")#; slacks = triangle_slack)
 #plot_param_variance(learned_params)
 if vary_param
 	plot_param_runs(learned, interactions, "")
 else
-	plot_param_runs(learned, Array{Float64,1}(), "")
+	println()
+	#plot_param_runs(learned, Array{Float64,1}(), "")
 end
 if vary_inits
 	plot_param_runs(learned, Array{Float64,1}(), "")
@@ -243,3 +251,13 @@ order = maximum([length(i) for i in keys(q_params)])
 modelq = FactorGraph(order, dh, :spin, q_params)
 samples_q = sample(modelq, vary_samples[end])
 print_stats(samples_q)
+
+println(collect(keys(q.params)))
+# reverse = true, q tree params => learned 3 body (no field)... check vs. closed form
+if reverse &&  maximum([i for theta in keys(q.params) for i in theta]) >= 4
+	mm = false
+	println("mathematica ", mm)
+	test_reverse_closed_form(q.params, p.params, mm)
+end
+
+

@@ -1,13 +1,15 @@
-function [families, parents, avg_log_ratio] = queryFamiliesClustering(distance,numSamples,verbose)
+function [families, parents, avg_log_ratio] = queryFamiliesClustering(distance,numSamples,min_max, verbose)
 
 % Find family groups by adaptive thresholding
 
-if(nargin < 3)
+if(nargin < 4)
     verbose = 0;
 end
-
-edgeD_min = -log(0.1);
-edgeD_max = -log(0.9);
+if nargin < 3
+    min_max = [.1, .9];
+end
+edgeD_min = -log(min_max(1));
+edgeD_max = -log(min_max(2));%-log(0.9);
 m = size(distance,1);
 %relD_thres = 2*edgeD_min;  % For reliable statistics, ignore distances below this threshold
 relD_thres = -log(0.05)+0.1*log(numSamples);
@@ -39,7 +41,8 @@ end
 
 avg_log_ratio = avg_log_ratio - avg_log_ratio';
 
-D = min(diff_log_ratio,diff_log_ratio');
+% max - min diff < eps => distance approximately equal for all k
+D = min(diff_log_ratio,diff_log_ratio'); 
 families = kmeansDistance(D,verbose);
 
 % Check whether there exists a parent node for each grouping
@@ -49,6 +52,10 @@ for f = 1:length(families)
     parent_score = zeros(length(members),1);
     for i=1:length(members) 
         p = members(i);
+        % parent score = average of values which should = distance
+        % if difference in distance < threshold (.9 corr) => parent
+        % (if we would contract hidden edge, i.e. diff = const but above
+        % threshold, then simply use parent-child relationship)
         parent_score(i) = sum(abs(avg_log_ratio(p,members) + distance(p,members)));
     end
     [min_parent_score, j] = min(parent_score);  

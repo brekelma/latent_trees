@@ -1,4 +1,4 @@
-function [adjmatTree, edge_distance] = CLRG(stats, useDistances, numSamples, min_max, adjmatCL)
+function [adjmatTree, edge_distance, adjmatCL] = CLRG2(stats, useDistances, numSamples, min_max)
 
 % CL-recursive-grouping algorithm to learn latent trees
 % PARAMETERS:
@@ -27,9 +27,7 @@ else
     distance = computeDistance(prob_bij);    
 end
 
-if nargin < 5
-    adjmatCL = ChowLiu(-distance);
-end
+adjmatCL = ChowLiu(-distance);
 %mi = computeMutualInformationBin(prob_bij);
 %adjmatCL = ChowLiu(mi);
 

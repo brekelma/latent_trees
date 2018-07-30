@@ -8,11 +8,11 @@ method = 'CLRG';
 
 hide = true; 
 use_anima = true;
-dim = 3;
-hidden = 0;
+dim = 6;
+hidden = 3;
 
 
-a = tdfread("../example.csv", 'tab');
+a = tdfread("../extended_tree.csv", 'tab');
 names = fieldnames(a);
 b = getfield(a, names{1});
 params = {};
@@ -27,11 +27,11 @@ for i=1:size(b,1)
     %params = [params, [param]];
     %append(tuples, [1])
 end
-
-n_samples = 1000000;
+"c1"
+n_samples = 100000;
 
 % construct more general
-configs = dec2bin(uint8([0:2^(dim+hidden)-1]));
+configs = dec2bin(uint16([0:2^(dim+hidden)-1]));
 configs = (configs + 'a' - 145).*2-1;
 conf = configs;
 
@@ -47,7 +47,7 @@ for k=1:size(configs, 1)
     end
     weights = [weights; evidence];
 end
-
+"c2"
 if use_anima
     configs2=  zeros(size(configs));
     for i=1:size(configs,1)
@@ -60,7 +60,7 @@ if use_anima
         end
     end
 end
-
+"c3"
 %configs = reshape(configs,[8,3])
 %configs2 = reshape(configs2, [8,3])
 weights = arrayfun(@exp, weights) ./ sum(arrayfun(@exp, weights));
@@ -82,7 +82,7 @@ for i = 1:n_samples
     trainSamples_obs(i, :) = configs(y(i),1:dim);
     trainSamples_all(i, :) = configs(y(i),:);
 end
-
+"c4"
 if hide
     trainSamples = trainSamples_obs';
 else
@@ -112,17 +112,21 @@ switch method
         [adjmatT, edgeD, initNodePot, initEdgePot, ll, bic] = regCLNJ_discrete(trainSamples, options);
         
 end
+"c5"
 drawLatentTree(adjmatT, 3)
 
 num_nodes = size(adjmatT,1);
 [~, root] = max(sum(adjmatT, 2));
 msg_order = treeMsgOrder(adjmatT, root);
 
-prob_bij = computeBnStats(trainSamples_all);
-    
+
+prob_bij = computeBnStats(trainSamples);
+ 
 % previously only over obs
 [node_potential,edge_potential]= marToPotBin(prob_bij, msg_order);
+  
 edge_pairs = msg_order(num_nodes:end,:);
+"c61"
 
 if use_anima
     root_mar = sum(trainSamples(root, :)-1 > 0) / size(trainSamples,2);
@@ -131,8 +135,33 @@ else
 end
 root_mar = [1- root_mar, root_mar];
 % need to use anima
-ll_bin = logProbTreeBin(root_mar,edge_potential,edge_pairs,trainSamples);
+ll_bin_all = logProbTreeBin(root_mar,edge_potential,edge_pairs,trainSamples);
 
+num_nodes = size(adjmatT,1);
+[~, root] = max(sum(adjmatT, 2));
+% doesnt work if just have params of "true"
+msg_order = treeMsgOrder(adjmatT, root);
+
+prob_bij = computeBnStats(trainSamples);
+ 
+% try to make this over all
+[node_potential,edge_potential]= marToPotBin(prob_bij, msg_order);
+  
+edge_pairs = msg_order(num_nodes:end,:);
+if use_anima
+    root_mar = sum(trainSamples(root, :)-1 > 0) / size(trainSamples,2);
+else
+    root_mar = sum(trainSamples(root, :)-1 >=0) / size(trainSamples,2);
+end
+root_mar = [1- root_mar, root_mar];
+ll_bin_obs = logProbTreeBin(root_mar,edge_potential,edge_pairs,trainSamples);
+
+"true " 
+sum(ll_bin_all)
+"cross"
+sum(ll_bin_obs)
+" kl: "
+sum(ll_bin_all)-sum(ll_bin_obs) 
 %ll = size(trainSamples,2)*computeAvgLLBin(node_potential(root,:),edge_potential,prob_bij,edge_pairs);
 %logProbTreeBin(root_mar,edgePot,edge_pairs,samples)
 %edge_distance

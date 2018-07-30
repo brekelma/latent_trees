@@ -1,4 +1,4 @@
-function [adjmatTree, edge_distance] = RG(stats, useDistances, numSamples)
+function [adjmatTree, edge_distance] = RG(stats, useDistances, numSamples, min_max)
 
 % Recursive grouping algorithm to learn latent trees
 % PARAMETERS:
@@ -6,13 +6,16 @@ function [adjmatTree, edge_distance] = RG(stats, useDistances, numSamples)
 %           stats = information distance matrix of observed nodes
 %       if useDistances==false:
 %           stats = samples of binary observed variables
+%       min_max[1] = min corr cutoff, min_max[2] = max corr
 %
 % OUTPUTS:
 %       adjmatTree = an adjacency matrix of a tree including latent nodes
 %       edge_distance = information distances on the edges of the tree
 %
 % Myung Jin Choi, Jan 2010, MIT
-
+if nargin < 4
+   min_max = [.1, .9];
+end
 if useDistances
     distance = stats;
 else
@@ -30,7 +33,7 @@ nodeSet = 1:m;
 newNodeNum = m+1;
 
 while(length(nodeSet) > 2)  % Continue grouping until one or two nodes remain
-    [families, parents, avg_log_ratio] = queryFamiliesClustering(currDist,numSamples);
+    [families, parents, avg_log_ratio] = queryFamiliesClustering(currDist,numSamples, min_max);
     num_next_nodes = length(families);
     nextNodeSet = zeros(num_next_nodes,1);
     adjNewOld = false(num_next_nodes, length(nodeSet));
@@ -69,7 +72,7 @@ end
 
 edge_distance = edge_distance + edge_distance';
 edge_distance = edge_distance - diag(diag(edge_distance));
-edge_distance = contractWeakEdges(edge_distance,m);
+edge_distance = contractWeakEdges(edge_distance,m, min_max(2));
 adjmatTree = logical(edge_distance);
 
 

@@ -2,40 +2,176 @@
 include("mrf.jl")
 include("math.jl")
 using PlotRecipes
-#using Graphs
+using Graphs
 using GraphPlot
 using LightGraphs, SimpleWeightedGraphs
 using Colors
 using Compose
+using Combinatorics
+
+
+
+function prune_params{T <: Real}(params::Dict{Tuple, T}; tol::Float64 = .01, prune_field::Bool = false)
+	for k in keys(params)
+		if abs(params[k]) < tol && !(prune_field && length(k)==1)
+			delete!(params, k)
+		end
+	end
+	return params
+end
+
+
+function prune_params{T <: Real, S <: Real}(params::Dict{Tuple, T}, true_params::Dict{Tuple, S}; prune_field::Bool = false)
+	min_coupling = minimum([true_params[k] for k in keys(true_params) if length(k) >= 2])
+	for k in keys(params)
+		if abs(params[k]) < min_coupling/2 && !(prune_field && length(k)==1)
+			delete!(params, k)
+		end
+	end
+	return params
+end
+
+function sort_params{T <: Real}(params::Dict{Tuple, T})
+	keyz = collect([keys(params)...])
+	for j in maximum([length(k) for k in keyz]):-1:2
+		keyz = keyz[sortperm([length(i)<j ? 0 : i[j] for i in keyz])]
+	end
+	keyz = keyz[sortperm([length(i) for i in keyz])]
+	new_keys = keyz[sortperm([i[1] for i in keyz])]
+	return new_keys
+end
+
+function dict2array{T<:Real}(dict::Dict{Tuple, T}; skip_higher::Bool = true, absolute_value::Bool = false)
+	dim = maximum([i for theta in keys(dict) for i in theta])
+	arr = zeros(dim, dim)
+	for k in keys(dict)
+		if length(k) == 2
+			arr[k[1], k[2]] = absolute_value ? abs(dict[k]) : dict[k]
+			arr[k[2], k[1]] = absolute_value ? abs(dict[k]) : dict[k]
+		elseif length(k) > 1 
+			if skip_higher
+				#println("Warning : skipping higher order interactions in dictionary to array conversion")
+			else
+				for i=1:length(k)
+					for j = i+1:length(k)
+						arr[k[i], k[j]] += absolute_value ? abs(dict[k]) : dict[k]
+						arr[k[j], k[i]] += absolute_value ? abs(dict[k]) : dict[k]
+					end
+				end
+			end
+		end
+	end
+	return arr
+end
+
+function array2dict{T <: Real}(dict::Dict{Any, T})
+	return dict
+end
+function array2dict{T <: Real}(array::Array{T, 2})
+	dict = Dict{Tuple, T}()
+	for i=1:size(array)[1]	
+		for j=1:size(array)[2]
+			if i == j
+				tup = (i,)
+			else
+				tup = sort_tuple((i,j))
+			end
+			if haskey(dict, tup)
+				if dict[tup] != array[i,j]
+					error("Array of reconstruction not symmetric")
+				end
+			else
+				dict[tup] = array[i,j]
+			end
+		end
+	end
+	return dict
+end
+
+function check_structure(adj1::Array{Bool, 2}, adj2::Array{Float64, 2}, obs::Int64)
+	if size(adj1)!=size(adj2)
+		return false
+	end
+	for perm in permutations([obs+1:size(adj1)[1]...])
+		p = append!([1:obs...], perm)
+		if _check_structure(adj1[p, p], adj2)
+			return true
+		end
+	end
+	return false
+end
+	
+function _check_structure(adj1::Array{Bool, 2}, adj2::Array{Float64, 2})
+	for i=1:size(adj1)[1]
+		for j=1:size(adj1)[2]
+			if (abs(adj1[i,j])>0 && adj2[i,j] ==0) || (adj1[i,j]==0 && abs(adj2[i,j])>0)
+				return false
+			end
+		end
+	end
+	return true
+end
+
+# function siblings{T <: Real}(dict::Dict{Tuple,T})
+# 	sibling = Array{Tuple, 1}()
+# 	edges = collect(keys(dict))
+# 	nodes = unique([i for param in edges for i in param])
+# 	for i in nodes
+# 		println(i, " : ", [k for k in setdiff(nodes,i) for j in setdiff(nodes, i) if (sort_tuple((i,j)) in edges && sort_tuple((j,k)) in edges && !(sort_tuple((i,k)) in edges))])
+# 		append!(sibling, tuple([k for k in setdiff(nodes,i) for j in setdiff(nodes, i) if sort_tuple((i,j)) in edges && sort_tuple((j,k)) in edges && !(sort_tuple((i,k)) in edges)]...))
+# 	end
+# end
 
 function matlab_samples{T <: Real}(samples::Array{T, 2})
 	matlab_samples = Array{T,2}()
 	for k = 1:size(samples)[1]
-		println(samples[k,1])
-		samps = hcat([samples[k, 2:end] for i=1:samples[k,1]]...)
-		println("samps ", size(samps), " matlab ", size(matlab_samples))
+		samps = repmat(samples[k, 2:end], 1, samples[k,1]) #hcat([samples[k, 2:end] for i=1:samples[k,1]]...)
 		matlab_samples = isempty(matlab_samples) ? samps : hcat(matlab_samples, samps)
 	end
-	println("total size : ", size(matlab_samples))
 	return matlab_samples
 end
 
-function random_init_tree_3(d::Int, order::Int; field = true, range = [0,1], seed = 0)
+
+function random_init_tree_3(d::Int, order::Int; field = true, range = [-1,1], seed = 0)
 	tup = Dict{Tuple, Float64}()
 	tups = Array{Tuple, 1}()
 	#for i = 1:order
 		#append!(mat, Any[i:d])
 	#end
-	for i=1:d
+	for i=1:d+1
 		if field
 			append!(tups, [(i,)])
 		end
-		if i != 4
-			append!(tups, [(i, 4)])
+		if i != d+1
+			append!(tups, [(i, d+1)])
 		end
 	end	
 	for t in unique(tups) #product(mat...)
-		tup[t] = rand()[1]*range[end]+range[1] # seed
+		tup[t] = rand()[1]*(range[end]-range[1])+range[1] # seed
+	end 
+	return tup
+end
+
+function random_init_dense(d::Int, order::Int; field = true, range = [-1,1], seed = 0, min_abs = .1)
+	tup = Dict{Tuple, Float64}()
+	tups = Array{Tuple, 1}()
+	#for i = 1:order
+		#append!(mat, Any[i:d])
+	#end
+	for i=1:d+1
+		if field
+			append!(tups, [(i,)])
+		end
+		for j=i+1:d+1
+			append!(tups, [(i,j)])
+		end
+	end	
+	for t in unique(tups) #product(mat...)
+		rando = rand()[1]*(range[end]-range[1])+range[1] # seed = 
+		while abs(rando) < min_abs
+			rando = rand()[1]*(range[end]-range[1])+range[1]
+		end
+		tup[t] = rando 
 	end 
 	return tup
 end
@@ -63,7 +199,7 @@ function random_init_p(d::Int, order::Int; field = true, range = [0,1], seed = 0
 
 	end	
 	for t in unique(tups) #product(mat...)
-		tup[t] = rand()[1]*range[end]+range[1] # seed
+		tup[t] = rand()[1]*(range[end]-range[1])+range[1] # seed
 	end 
 	return tup
 end
@@ -88,7 +224,7 @@ end
 #end
 
 
-function plot_param_runs(run_dict::Dict{Tuple,Array{Any,1}}, param_values::Array{Float64, 1} = [], param_name::String=""; title::String="", reverse = false)
+function plot_param_runs(run_dict::Dict{Tuple,Array}, param_values::Array{Float64, 1} = [], param_name::String=""; title::String="", reverse = false, orders = [1,2])
 	#fig_size = 
 	if isempty(param_values)
 		x_lbl = "random initialization #"
@@ -103,14 +239,32 @@ function plot_param_runs(run_dict::Dict{Tuple,Array{Any,1}}, param_values::Array
 	fnt = 10
 	
 	key = [k for k in keys(run_dict)]
-	idx_ones = [k for k in key if length(k)==1]
-	idx_twos = [k for k in key if length(k)==2]
-	ones = length(idx_ones)
-	twos = length(idx_twos)
-	
-	l = @layout [ grid(ones,1) grid(twos,1) ]
-	series_ones = [run_dict[i] for i in idx_ones]
-	series_twos = [run_dict[i] for i in idx_twos]
+	key_per_dim = fill(Array{Tuple, 1}(), (length(orders),)) #Array{Array, 1}() #)#
+	lengths = zeros(length(orders))
+	println("key ", typeof(key), " ", length(key))
+	for i= 1:length(orders)
+		if length(key_per_dim) < i
+			append!(key_per_dim, [])
+		end
+		println("orders ", orders)
+		println("k ", [k for k in key])
+		println("len k ", [length(k) for k in key])
+		append!(key_per_dim[i], [k for k in keys(run_dict) if length(k)==orders[i]])
+		#idx_ones = [k for k in key if length(k)==orders[1]]
+		#idx_twos = [k for k in key if length(k)==orders[2]]
+	end
+	println("len key_per_dim ", length(key_per_dim))
+	println("length 1 ", key_per_dim[1])
+	println("length 2 ", key_per_dim[2])
+	lengths = [length(key_per_dim[i]) for i in 1:length(key_per_dim)]	
+	#ones = length(idx_ones)
+	#twos = length(idx_twos)
+	#println("GRID ones: ", ones, " twos: ", twos)
+	#l = @layout [ grid(ones,1) grid(twos,1) ]
+	l = @layout [ hcat([grid(lengths[i], 1) for i =1:length(lengths)]...)]
+	series = [[run_dict[j] for j in key_per_dim[i]] for i in 1:length(key_per_dim)]
+	#series_ones = [run_dict[i] for i in idx_ones]
+	#series_twos = [run_dict[i] for i in idx_twos]
 	# arg sort
 	# if sortit
 	# 	s1 = sortperm(series_ones)
@@ -120,15 +274,21 @@ function plot_param_runs(run_dict::Dict{Tuple,Array{Any,1}}, param_values::Array
 	# 	param_values1 = param_value[s1]
 	# 	param_values2 = param_value[s2]
 	# end
-
-	left = scatter( param_values, vcat(inits ? [sort(i) for i in series_ones] : series_ones) , layout = grid(ones, 1), title = hcat([string(i[1], ", ") for i in idx_ones]...), markersize = mrk, titlefont = font(fnt))
-	right = scatter( param_values, vcat(inits ? [sort(i) for i in series_twos] : series_twos) , layout = grid(twos, 1), title = hcat([string("(", i[1], ", ", i[2],")") for i in idx_twos]...), markersize = mrk, titlefont = font(fnt))
-	lay = @layout [ a b ]
+	scatters = fill(scatter(), (length(key_per_dim))) #Array{Any, 1}()
+	for i=1:length(key_per_dim)
+		scatters[i] = scatter(param_values, vcat(inits ? [sort(j) for j in series[i]] : series[i]) , layout = grid(lengths[i], 1), title = hcat([string(j[1], ", ") for j in key_per_dim[i]]...), markersize = mrk)#, titlefont = font(fnt)))
+		#left = scatter( param_values, vcat(inits ? [sort(i) for i in series_ones] : series_ones) , layout = grid(ones, 1), title = hcat([string(i[1], ", ") for i in idx_ones]...), markersize = mrk)#, titlefont = font(fnt))
+		#right = scatter( param_values, vcat(inits ? [sort(i) for i in series_twos] : series_twos) , layout = grid(twos, 1), title = hcat([string("(", i[1], ", ", i[2],")") for i in idx_twos]...), markersize = mrk)#, titlefont = font(fnt))
+	end
+	println(length(scatters), typeof(scatters[1]))
 	#title =  string("Learned ", reverse ? "P" : "Q", " Params by ", inits ? "Init" : string("Parameter ", param_name))
-	scatter(left, right, layout=lay, legend=false, reuse = false)
+	PlotRecipes.scatter(scatters, layout=l, legend=false, reuse = false, size = (20, 20))
+	#working: lay = @layout [ a b ]
+	#working: PlotRecipes.scatter(left, right, layout=lay, legend=false, reuse = false, size = (20, 20))
+	
 	#PyPlot.suptitle(string("Learned ", reverse ? "P" : "Q", " Params by ", inits ? "Init" : string("Parameter ", param_name)))
 	#PyPlot.savefig("param_runs.pdf")
-	savefig(string("param_runs", title, ".pdf"))
+	savefig(string("param_runs_", title, ".pdf"))
 	#display(plt)
 	#plot([ hcat(run_dict[i] for i in keys(run_dict)) ], layout = l, title = [ hcat([i for i in keys(run_dict)]) ]  )
 end
@@ -182,35 +342,36 @@ function plot_sample_runs{T <: Real, S <: Real}(sample_kls::Dict{T, Array{Any, 1
 	end
 	#xlabel = xlab, #", param_name
 	println("try plot", " labels ", labels, " sample_kls ", length(sample_kls))
-	plot(param_value, [kl for kl in sample_kls], label=[string(string(i), " samples") for i in labels], title = string("KL Divergence by Sample / Parameter "), legend = true, reuse = false)
+	PlotRecipes.plot(param_value, [kl for kl in sample_kls], label=[string(string(i), " samples") for i in labels], title = string("KL Divergence by Sample / Parameter "), legend = true, reuse = false)
 	savefig("sample_runs.pdf")
 end
 
-function display_factor(m::MRF)
-	_display_factor(m.params, m.dim)
+function display_factor(m::MRF, name::String="learned_graph"; field::Bool = false, observed::Int64=0)
+	_display_factor(m.params, m.dim, name, field=field, observed = observed)
 end
-function display_factor(m::FactorGraph)
-	_display_factor(m.terms, m.variable_count)
+function display_factor(m::FactorGraph, name::String="learned_graph"; field::Bool = false, observed::Int64=0)
+	_display_factor(m.terms, m.varible_count, name, field=field, observed = observed)
 end
-function display_factor{T <: Real }(params::Dict{Tuple, T})
+function display_factor{T <: Real }(params::Dict{Tuple, T}, name::String="learned_graph"; field::Bool = false, observed::Int64=0)
 	dim = maximum([i for theta in keys(params) for i in theta])
-	_display_factor(params, dim)
+	_display_factor(params, dim, name, field=field, observed = observed)
 end
-function _display_factor{T <: Real}(params::Dict{Tuple, T}, dim::Int64)
-
-	nodelabels = zeros(dim)
+function _display_factor{T <: Real}(params::Dict{Tuple, T}, dim::Int64, name::String; field::Bool = false, observed::Int64=0, disp_field::Bool =false)
+	nodelabels = [1.0*1:dim...]
 	g = SimpleWeightedGraph(dim) #simple_graph(m.dim, is_directed = false)
 	v = collect(LightGraphs.vertices(g))
 	#wedges = Array{Any, 1}()
 	for coupling in keys(params)
-		
 		sort_tuple(coupling)
 		if length(coupling) == 1
-			nodelabels[coupling[1]] = params[coupling]
+			if disp_field
+				nodelabels[coupling[1]] = params[coupling]
+			end
 		elseif length(coupling) == 2
 			LightGraphs.add_edge!(g, v[coupling[1]], v[coupling[2]], params[coupling])
 			#append!(wedges, [we])
 		else
+			factor_edge = false
 			str_name = "factor_"
 			for i =1:length(coupling)
 				str_name = string(str_name, string(coupling[i]))
@@ -218,19 +379,30 @@ function _display_factor{T <: Real}(params::Dict{Tuple, T}, dim::Int64)
 			LightGraphs.add_vertex!(g)#, str_name)
 			v_ind = nv(g)
 			for i =1:length(coupling)
-				LightGraphs.add_edge!(g, v[coupling[i]], v_ind, params[coupling])
+				if factor_edge
+					LightGraphs.add_edge!(g, v[coupling[i]], v_ind)#, params[coupling])
+				else
+					LightGraphs.add_edge!(g, v[coupling[i]], v_ind) #params[coupling])
+				end
 			end
-			append!(nodelabels, [params[coupling]])
+			if factor_edge
+				append!(nodelabels, v_ind)
+			else
+				append!(nodelabels, params[coupling])
+			end
 		end
 	end
-	node_fill = []
-	for i=1:length(nodelabels)
-		if i < dim
-			node_fill[i] = append!(node_fill, [distinguishable_colors(3)[1]])
-		else
-			node_fill[i] = append!(node_fill, [distinguishable_colors(3)[2]])
-		end
-	end
+	node_fill = [1:dim...]
+	#println("node labels ", length(nodelabels), nodelabels)
+	#println("OBSERVED ", obs)
+	c1 = [201, 201, 201]
+	c2 = [250, 235, 215]
+	c3 = [255, 255, 0]
+	c1 = RGB(c1[1]/255, c1[2]/255, c1[3]/255) #parse(Colorant, "blue")
+	c2 = RGB(c2[1]/255, c2[2]/255, c2[3]/255) #parse(Colorant, "yellow")
+	c3 = RGB(c3[1]/255, c3[2]/255, c3[3]/255) 
+	node_fill = [i <= observed ? c1 : (i <= dim ? c2 : c3 ) for i =1:length(nodelabels)]
+	#println(node_fill)
 	weights = zeros(ne(g))
 	i = 0
 	for wedge in LightGraphs.edges(g)
@@ -238,8 +410,10 @@ function _display_factor{T <: Real}(params::Dict{Tuple, T}, dim::Int64)
 		weights[i] = round(weight(wedge), 2)
 		#weights[edge_index(wedge.edge, g)] = wedge.weight
 	end #nodefillc = node_fill,
-	nodelabels = [round(n, 2) for n in nodelabels]
-	draw(PNG("learned_graph.png", 8cm, 8cm),gplot(g,  nodelabel = nodelabels, edgelabel = weights)) 
+	nodelabels = disp_field ? [round(n, 3) for n in nodelabels] : [n % 1 == 0 ? floor(Int, n) : round(n, 3) for n in nodelabels]
+	#random_layout, circular_layout, spring_layout, stressmajorize_layout, shell_layout, spectral_layout
+	l = length(weights) < length(nodelabels)-1 ? shell_layout : spring_layout
+	Compose.draw(PDF(string(name, ".pdf"), 10cm, 10cm), gplot(g, layout = l, nodelabel = nodelabels,  edgelabel = weights, nodefillc = node_fill))  #
 	#gplot(g, nodefillc = node_fill, nodelabel = nodelabels, edgelabel = weights)
 end
 
@@ -283,18 +457,42 @@ function vis_mrf(m::MRF)
 end
 
 
-function read_params(fn::String; rand_init = false, range = [-1, 1], delim="\t", datarow = 2)
+function read_params(fn::String; rand_init = false, range = [-1, 1], field = true, field_range = [], min_abs = 0, delim="\t", datarow = 2)
     df = CSV.read(fn; delim = delim, header=0, datarow = datarow, types = [String, Float64], allowmissing =:none)
 	splits = [split(df[r,1],',', keep = false) for r=1:size(df)[1]]
 	params = Dict{Tuple, Float64}()
+	
 	for r=1:size(df)[1]
 		if rand_init
-			params[tuple([parse(Int64, splits[r][i]) for i=1:length(splits[r])]...)] = rand()[1]*range[end]+range[1]
+			if field || length(splits[r])>1
+				if field && !isempty(field_range)
+					randnum = rand()[1]*(field_range[end]-field_range[1])+field_range[1]
+				else
+					randnum = rand()[1]*(range[end]-range[1])+range[1]
+				end
+				if length(splits[r]) > 1 || isempty(field_range)
+					while abs(randnum) <  min_abs
+						randnum = rand()[1]*(range[end]-range[1])+range[1]	
+					end
+				end
+				params[tuple([parse(Int64, splits[r][i]) for i=1:length(splits[r])]...)] = randnum
+			end
 		else
+			println("adding param ", df[r,2])
 			params[tuple([parse(Int64, splits[r][i]) for i=1:length(splits[r])]...)] = df[r,2]
 		end
 	end
 	return params
+end
+
+function print_params_latex{T <: Real}(dict::Dict{Tuple, T})
+	for k in sort_params(dict)
+		for i in 1:length(k)
+			print(i != length(k) ? string(k[i], ", ") : k[i])
+		end
+		println("\t & ", round(dict[k],3), " \\\\ ")
+		#println("\t ", round(p_params[k],3))#" \\\\ ")
+	end
 end
 
 function print_params{T <: Real}(dict::Dict{Tuple, T})
@@ -307,19 +505,24 @@ function print_params{T <: Real}(dict::Dict{Tuple, T})
 	println()
 end
 
-function pprint2d{T <: Real}(arr::Array{T, 2})
+function pprint2d{T <: Real}(arr::Array{T, 2}; latex = true, rounding = 4)
 	for i = 1:length(arr[:,1])
 		if i > 1
 			print("\n")
 		end
 		for j = 1:length(arr[1,:])
-			print(round(arr[i,j], 4), "\t")
+			print(round(arr[i,j], rounding), "\t")
+			if latex && j != length(arr[1,:])
+				print("& ")
+			end
 		end
 	end
-	println()
+	if latex
+		println(" \\\\")
+	else
+		println()
+	end
 end
-
-
 
 
 function print_stats{T <: Real}(samples::Array{T, 2})
@@ -339,15 +542,15 @@ function print_stats{T <: Real}(samples::Array{T, 2})
 	println("mean spins ")
 	println(mean)
 	
-	println("multiplicative correlations ")
+	println("multiplicative correlation ")
 	pprint2d(corr)
 	println()
 
-	println("covariances")
-	pprint2d(cov)
-	println()
+	# println("covariances")
+	# pprint2d(cov)
+	# println()
 
-	println("corr coeff")
+	println("reduced correlation")
 	pprint2d(rho)
 
 	#println("pearl corr")

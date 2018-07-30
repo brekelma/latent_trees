@@ -1,10 +1,10 @@
 using Compat
 using Graphs
+using StatsBase
 include("math.jl")
 export min_kl, min_kl_manual, emp_lld, dist_lld
 # CONVERT EVERYTHING TO MY TYPE?
 @compat abstract type MRF end
-
 
 type mrf <: MRF
 	params::Dict{Tuple, Float64}
@@ -14,7 +14,7 @@ type mrf <: MRF
 	#base::Float64
 	#stats::Dict{Tuple, Array{Float64,1}}
 	mrf(params, samples) = new(params, [samples], maximum([i for theta in keys(params) for i in theta]), maximum([length(i) for i in keys(params)]))
-
+	mrf() = new(Dict{Tuple, Float64}(), Array{Array{Real,2},1}(), 0, 0)
 end
 
 # Add hidden configurations (Specify as Joint binary, e.g.)  
@@ -35,8 +35,9 @@ type hmrf <: MRF
 	
 	# NECESSARY to permute dims?
 	#hmrf(params, samples, hsupport) = new(params, samples, hsupport, Dict{Tuple, Array{Float64,1}}())
-
-	hmrf(params, samples) = new(params, [samples], "none", maximum([i for theta in keys(params) for i in theta]), maximum([length(i) for i in keys(params)]))
+	#hmrf(params, samples) = new(params, samples, [-1,1], maximum([i for theta in keys(params) for i in theta]), maximum([length(i) for i in keys(params)]))
+	hmrf(params, samples) = new(params, isa(samples, Array{Array{Real, 2}, 1}) ? samples : [samples], [-1,1], maximum([i for theta in keys(params) for i in theta]), maximum([length(i) for i in keys(params)]))
+	hmrf() = new(Dict{Tuple, Float64}(), Array{Array{Real,2},1}(), [-1, 1], 0, 0)
 end
 
 
@@ -61,12 +62,26 @@ function log_partition(m::MRF)
 	#return logsumexp(evidence(m))
 end
 
+function log_partition(evidence_m::Array{Array{T,N},N}) where N where T<:Real
+	return logsumlog(evidence_m)
+end
+
 # marginalizes hidden variables automatically
-function emp_lld(m::MRF)
-	data_evidence = [sum(evidence(m)[k]) for k=1:size(m.samples[1])[1]] # sum over hidden states
-	log_marginal = [log(data_evidence[k]) - log_partition(m) for k=1:length(data_evidence)]
-	# dim 1 = configs, dim 2 = sample counts, dim 3 = necessary for hiddens
-	return sum(m.samples[1][k, 1]/sum(m.samples[1][:,1])*log_marginal[k] for k=1:size(m.samples[1])[1])
+function emp_lld(m::MRF; verbose = false, emp = false)
+	if emp || (isempty(m.params) && size(m.samples)[1] == 1)
+		if verbose
+			println("No params or hiddens in first argument... Using sample probabilities for log likelihood")
+		end
+		return sum(m.samples[1][k, 1]/sum(m.samples[1][:,1])*log(sum(m.samples[1][k, 1]/sum(m.samples[1][:,1]))) for k=1:size(m.samples[1])[1])
+	else
+		ev = evidence(m)
+		partition = log_partition(ev)
+		println("EVIDENCE SIZE (dim 1 = configs?) ", size(ev))
+		data_evidence = [sum(ev[k]) for k=1:size(m.samples[1])[1]] # sum over hidden states
+		log_marginal = [log(data_evidence[k]) - partition for k=1:length(data_evidence)]
+		# dim 1 = configs, dim 2 = sample counts, dim 3 = necessary for hiddens
+		return sum(m.samples[1][k, 1]/sum(m.samples[1][:,1])*log_marginal[k] for k=1:size(m.samples[1])[1])
+	end
 end
 
 function dist_lld(m::MRF, dist::Array{Float64, 1})
@@ -81,14 +96,98 @@ function xent(p, samples)
 end
 
 
-function kl_empirical(m1::MRF, m2::MRF; base::Real = exp(1))
+function kl_empirical{T<:Real}(m1::MRF, m2::MRF; base::T= exp(1))
 	return ln_convert(sum(emp_lld(m1)) - sum(emp_lld(m2)), base)
 end
 
 # can get rid of dist??
-function kl_dist(m1::MRF, m2::MRF, dist::Array{Float64, 1}; base::Real= exp(1))
+function kl_dist{T<:Real}(m1::MRF, m2::MRF, dist::Array{Float64, 1}; base::T= exp(1))
 	return ln_convert(dist_lld(m1, dist) - dist_lld(m2, dist), base)
 end
+
+
+function min_kl(p::MRF, q::MRF; verbose = true, emp = true)
+	kl_ = emp_lld(p, verbose = verbose, emp = emp) - max_lld(q, verbose = verbose)
+	println("Final KL divergence (nats): ",  kl_ ," (bits): ", ln_convert(kl_, 2))
+	return ln_convert(kl_, 2)
+end 
+
+function cond_prob_hidden{T <: Real, S <: Real}(m::MRF, index::Int64, given::Array{T, 1}, h_support::Array{S, 1} = [-1,1])
+	# m.samples too small... only configs over givens
+	llh = []
+	for h in h_support
+		append!(llh, [exp(sum((prod(i==index ? h : given[i] for i in param)*m.params[param]) for param in keys(m.params)))])
+	end
+	llh = llh ./ sum(llh)
+	return llh
+end 
+
+
+
+
+
+# type FactorGraph{T <: Real}
+#     order::Int
+#     varible_count::Int
+#     alphabet::Symbol
+#     terms::Dict{Tuple,T} 
+#     variable_names::Nullable{Vector{String}}
+
+function int_to_spin(int_representation::Int, spin_number::Int)
+    spin = 2*digits(int_representation, 2, spin_number)-1
+    return spin
+end
+
+function cond_sample_hidden(m::mrf, obs::Int64)
+	#	includes hidden
+	params = m.params #::Dict{Tuple, Float64}
+	samples = m.samples[1] #::Array{Array{Real,2},1} # extra dimension for hidden node(s)
+	new_h = [i for i = obs+1:m.dim] 
+	obs_configs = [samples[k,2:end] for k =1:size(samples)[1]]
+	println("obs_configs (configs x spin values?)", size(obs_configs))
+	obs_samples = [samples[i,1] for i = 1:size(samples)[1]]
+	ns_obs = sum(obs_samples)
+	
+	conf_num = [conf for conf=0:2^length(new_h)-1]
+	spins = [digits(conf, 2) for conf=0:2^length(new_h)-1]
+    spins = spins.* 2-1
+    println("size spins ", size(spins))
+    #for j = 1:size(spins)[1]
+    #new_samples = zeros(1, obs+length(new_h)+1)
+    new_samples = zeros(size(samples)[1]*length(conf_num), obs+length(new_h)+1)
+    new_ind = 1
+    for k = 1:size(samples)[1]
+    	samples_to_draw = samples[k,1]
+   
+		weights = [exp(sum(m.params[key] * prod((i <= obs ? samples[k,1+i] : spins[j, i-obs]) for i in key) for key in keys(m.params)))[1] for j = 1:length(conf_num)]
+		# draw samples = # of obs config : samples[k,1]
+		weights = [weights[i] for i=1:length(weights)]
+		raw_sample = StatsBase.sample(conf_num, StatsBase.Weights(weights), samples_to_draw, ordered=false)
+		
+    	#new_sample =   # count each
+		count_hconfig = countmap(raw_sample)
+		
+		#samples[k,2:obs+1],
+		spin_sample = [ vcat(count_hconfig[i], samples[k,2:obs+1], int_to_spin(i, length(new_h))) for i in keys(count_hconfig)]
+        samp = zeros(length(spin_sample), length(spin_sample[1]))
+        for i = 1:length(spin_sample)
+        	println(spin_sample[i])
+        	samp[i, :] = spin_sample[i]
+        end
+        new_samples[new_ind:new_ind+length(spin_sample)-1, :] = samp #hcat(spin_sample...)')
+        new_ind+= length(spin_sample)
+    	#raw_sample_bins = reshape(raw_sample, bins, samples_per_bin)
+		# new sample matrix => hcat obs config + draw from hidden 
+	end
+	return new_samples
+end
+
+
+
+
+
+
+
 
 
 function gradient_xent(m::MRF; reversed=false)
@@ -158,12 +257,10 @@ function min_kl_manual(p::MRF, q::MRF; verbose = false)
 	return kl_history[end]
 end
 
-function min_kl(p::MRF, q::MRF; verbose = true)
-	kl_ = emp_lld(p) - max_lld(q, verbose = verbose)
-	println("Final KL divergence (bits): ", ln_convert(kl_, 2))
-	return ln_convert(kl_, 2)
-end 
 
+function test_reverse_closed_form(m1::MRF, m2::MRF)
+	test_reverse_closed_form(m1.params, m2.params)
+end
 
 
 function pearl_sandwich(m::MRF)
@@ -174,4 +271,12 @@ function pearl_sandwich(m::MRF)
 	end
 	return pearl_sandwich_marginal(samples)
 	#return pearl_sandwich_full_cov(samples)
+end
+
+function switch_sign(m::MRF, node::Int64)
+	for k in keys(m.params)
+		if node in k
+			m.params[k] = -1*m.params[k]
+		end
+	end
 end

@@ -1,6 +1,8 @@
-function edge_distance = contractWeakEdges(edge_distance,m)
-
-edgeD_max = -log(0.9);
+function edge_distance = contractWeakEdges(edge_distance,m, max)
+if nargin < 3
+   max = .9;
+end
+edgeD_max = -log(max);
 [ind1,ind2,s] = find(edge_distance);
 weak_ind = find(s < edgeD_max & ind1 < ind2);
 
