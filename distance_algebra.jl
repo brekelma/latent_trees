@@ -18,7 +18,7 @@ fn = "example_1236.csv"
 srand(floor(Int, 100*(time() % 1)));
 obs = 6 # total = 9
 learn_order = 3
-num_samp = 10000000
+num_samp = 100000000
 # rand init and range for values
 rand_init = false
 range_params = [-1, 1]
@@ -54,7 +54,7 @@ model = FactorGraph(maximum([length(i) for i in keys(tree_params)]),
 		maximum([i for theta in keys(tree_params) for i in theta]), 
 		:spin, tree_params)
 
-full_samples = sample(model, num_samp)
+full_samples = GraphicalModelLearning.sample(model, num_samp)
 samples = full_samples[:,1:(obs+1)]
 
 p = mrf(tree_params, full_samples)
@@ -133,22 +133,38 @@ println()
 println()
 corr = Array{Float64, 2}()
 dists = Array{Float64, 2}()
+surrogates = Dict{Int64, Int64}()
+
 hidden_edges = Dict{Int64, Array{Tuple, 1}}()
+hidden_edges[0] = [] # base for storing parent-child edges between observeds
 nodes = 4
 addl_obs = 0
+inodes = Array{Int64,1}()
 while nodes + addl_obs <= size(samples)[2]-1
 	inodes = threshold_params(q.terms; num_nodes = nodes + addl_obs)
 	if length(inodes) > nodes + addl_obs
 		deleteat!(inodes, length(inodes))
 	end
 	# should get inclusion of hidden nodes, previous for free... just union with hiddens
-	inodes = union(inodes, keys(hidden_edges))
+	inodes = union(inodes, setdiff(keys(hidden_edges), [0]))
+
+	# replace surrogates
+	for h in keys(hidden_edges)
+		if h!=0
+			if surrogates[h] in inodes
+				deleteat!(inodes, findfirst(inodes, surrogates[h]))
+			end
+			println("Surrogate of ", h, " is ", surrogates[h], "... deleted? ", inodes)
+		end
+	end 
+
+
 	println("Dist Alg Nodes: ", inodes)
 	if isempty(corr)
 		corr = corrs(samples, pearson = true)
 	end
 	#a = distance_algebra(tnodes, corr; distances = false)
-	edge_dict, dists = distance_algebra(inodes, corr; calculated = dists, distances = false, addl_hidden = isempty(dists) ? 0 : size(corr)[1])
+	edge_dict, dists = distance_algebra(inodes, corr; calculated = dists, distances = false)
 	println()
 	if !isempty(edge_dict)
 		new_hidden = []
@@ -159,6 +175,9 @@ while nodes + addl_obs <= size(samples)[2]-1
 				append!(new_hidden,[k])
 			end
 			append!(hidden_edges[k], edge_dict[k])
+			if k!=0
+				surrogates[k] = indmax(-1*abs.(dists[k, :]))
+			end
 		end
 		if isempty(new_hidden)
 			addl_obs += 1
@@ -170,7 +189,10 @@ while nodes + addl_obs <= size(samples)[2]-1
 	println("hidden edges added? ", hidden_edges)
 end
 
-
-
 println()
-pprint2d(corr)
+println("Distances Calculated")
+pprint2d(dists, latex = false)
+println() 
+
+println("Distances Observed")
+pprint2d(-log(abs.(corr)), latex = false)

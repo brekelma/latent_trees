@@ -131,6 +131,39 @@ function matlab_samples{T <: Real}(samples::Array{T, 2})
 	return matlab_samples
 end
 
+function random_init_multi(dim::Int64, order::Int64; range = [-1, 1], min_abs = 0.0)
+    params = Dict{Tuple, Float64}()
+    for current_spin = 1:dim
+        nodal_stat = Dict{Tuple,Array{Real,1}}()
+        
+        for p = 1:order
+            nodal_keys = Array{Tuple{},1}()
+            neighbours = [i for i=1:dim if i!=current_spin]
+            if p == 1
+                nodal_keys = [(current_spin,)]
+            else
+                perm = permutations(neighbours, p - 1)
+                if length(perm) > 0
+                    nodal_keys = [(current_spin, perm[i]...) for i=1:length(perm)]
+                end
+            end
+
+            for index = 1:length(nodal_keys)
+                key = tuple(sort([i for i in nodal_keys[index]])...)
+                if !haskey(params, key)
+                    randnum = rand()[1]*(range[end]-range[1])+range[1]  
+                    while abs(randnum) <  min_abs
+                        randnum = rand()[1]*(range[end]-range[1])+range[1]  
+                    end
+                    params[key] = randnum
+                end
+            end
+        end
+    end
+    return params
+end
+
+
 
 function random_init_tree_3(d::Int, order::Int; field = true, range = [-1,1], seed = 0)
 	tup = Dict{Tuple, Float64}()
@@ -456,7 +489,6 @@ function vis_mrf(m::MRF)
 		l = (4, cgrad()), method=:tree, m =[n > obs ? :yellow : :steelblue for n in nodes])
 end
 
-
 function read_params(fn::String; rand_init = false, range = [-1, 1], field = true, field_range = [], min_abs = 0, delim="\t", datarow = 2)
     df = CSV.read(fn; delim = delim, header=0, datarow = datarow, types = [String, Float64], allowmissing =:none)
 	splits = [split(df[r,1],',', keep = false) for r=1:size(df)[1]]
@@ -478,7 +510,7 @@ function read_params(fn::String; rand_init = false, range = [-1, 1], field = tru
 				params[tuple([parse(Int64, splits[r][i]) for i=1:length(splits[r])]...)] = randnum
 			end
 		else
-			println("adding param ", df[r,2])
+			#println("adding param ", df[r,2])
 			params[tuple([parse(Int64, splits[r][i]) for i=1:length(splits[r])]...)] = df[r,2]
 		end
 	end

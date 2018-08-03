@@ -33,7 +33,7 @@ function chow_liu{T <: Real}(mi::Array{T,2}; min::Bool = false)
 	cl_tree = Dict{Tuple, T}()
 	mis = []
 	for i =1:size(mi)[2]
-		for j =i+1:size(mi)[2]
+		for j =(i+1):size(mi)[2]
 			append!(mis, [min ? mi[i,j] : -1*mi[i,j]])
 			edges[length(mis)] = sort_tuple((i,j))
 		end
@@ -96,6 +96,88 @@ function threshold_params{T<:Tuple, S<:Real}(dict::Dict{T,S}; threshold::Float64
 	return nodes
 end
 
+function test_node_relationships{T <: Real}(nodes::Array{Int64, 1}, calculated::Array{T, 2}, dist::Array{T, 2}; threshold = 0.02, max_dist = 10)#4.6)
+	max_val = 10.0^5
+	comparison_order = 3
+	permlist = permutations(nodes, comparison_order, asymmetric=true)
+	#println("Correlations")
+	#pprint2d(corrs)
+	#println()
+	#perms = Dict{Tuple, Float64}()
+	triplets = 0
+	calcs = 0
+	#obs = size(dist)[1]
+	phi = Dict{Tuple, Float64}()
+	nodes = sort(nodes)
+	siblings = Array{Tuple, 1}()
+	parents = Dict{Int64, Array{Int64, 1}}()
+	for p in permlist
+		if length(unique(p)) != comparison_order
+			continue
+		end
+		tup = tuple([sort_tuple(p[1:2])...;p[3]]...)
+		if !haskey(phi, tup)
+			
+			phi[tup] = max_val
+	#end
+			# IMPLEMENT OTHERS FOR HIDDEN NODES !!!! 
+			(i,j,k) = tup
+			if calculated[i, j] == 0
+				calculated[i,j] = dist[i,j]
+				calculated[j,i] = dist[j,i]
+				calcs += 1
+			end
+			if calculated[i, k] == 0
+				calculated[i,k] = dist[i,k]
+				calculated[k,i] = dist[k,i]
+				calcs += 1
+			end
+			if calculated[j, k] == 0
+				calculated[j,k] = dist[j,k]
+				calculated[k,j] = dist[k,j]
+				calcs += 1
+			end
+			# never count hidden distance calculations... but only once per...
+			# calcs += sum([i > total_vars, j > total_vars, k > total_vars])
+			phi[(i,j,k)] = calculated[i,k] - calculated[j,k]
+			#phi[(j,i,k)] = calculated[j,k] - calculated[i,k]
+			triplets += 1
+		end
+	end
+	considered = Array{Tuple, 1}()
+	
+	for (i,j,k) in keys(phi)
+		if !((i,j) in considered)
+			k_phis = [phi[(i,j,kk)] for kk in nodes if ((i,j,kk) in keys(phi) && calculated[i,kk]<=max_dist && calculated[j,kk]<=max_dist)|| ((j, i, kk) in keys(phi) && calculated[i,kk]<=max_dist && calculated[j,kk]<=max_dist)]
+			#println("diff phis ", maximum(k_phis) - minimum(k_phis), " # k's ", length(k_phis))
+			ks = [kk for kk in nodes if ((i,j,kk) in keys(phi) && calculated[i,kk]<=max_dist && calculated[j,kk]<=max_dist)|| ((j, i, kk) in keys(phi) && calculated[i,kk]<=max_dist && calculated[j,kk]<=max_dist)]
+			#println("tuple : ", (i,j), " | phi :", [round(phi[(i,j,k)],3) for k in ks],  " other nodes:, ", ks)
+			#println("distances used : ", [(calculated[i,k], calculated[j,k]) for k in ks])
+			#println("all distances : ", [(calculated[i,k], calculated[j,k]) for k in nodes])
+			if !isempty(k_phis) && maximum(k_phis) - minimum(k_phis) < threshold 
+				if (phi[(i,j,k)] <= calculated[i,j] + threshold) && (phi[(i,j,k)] >= calculated[i,j] - threshold)
+					# declare parent / child
+					if !haskey(parents, j)
+						parents[j] = []
+					end
+					append!(parents[j], [i])
+				elseif (phi[(i,j,k)] <= -calculated[i,j] + threshold) && (phi[(i,j,k)] >= -calculated[i,j] - threshold)
+					# declare parent / child
+					if !haskey(parents, i)
+						parents[i] = []
+					end
+					append!(parents[i], [j])
+				elseif length(k_phis) > 1
+					#println("siblings ", (i,j), " from key ", (i,j,k))
+					append!(siblings, [(i,j)])
+				end
+			end
+			append!(considered, [(i,j)])
+		end
+	end
+	return phi, parents, siblings
+end
+
 function distance_algebra(nodes::Array{Int64, 1}, corrs::Array{Float64, 2}; calculated = Array{Float64, 2}(), addl_hidden = 0, threshold = 0.05, distances = false, max_dist = 4.6)
 	# nodes = list of indices
 	# corrs 
@@ -104,18 +186,23 @@ function distance_algebra(nodes::Array{Int64, 1}, corrs::Array{Float64, 2}; calc
 	adjacency = Array{Tuple, 1}()
 	comparison_order = 3 # shouldnt change
 	# INCORPORATE RECURSION (pre calculated distances of given size)
-
-	if !distances
-		dist = -log.(abs.(corrs))
-	else
-		dist = corrs
-	end
-	total_vars = size(corrs)[1]
-	
+	total_vars = 0
+	obs = size(corrs)[1]
 	#calculated=Array{Float64, 2}()
 	if isempty(calculated)
+		if !distances
+			dist = -log.(abs.(corrs))
+		else
+			dist = corrs
+		end
+		total_vars = size(corrs)[1]
 		calculated = zeros(size(corrs))
 		#calculated = zeros(size(corrs)[1]+num_hidden, size(corrs)[2]+num_hidden)
+	else
+		dist = calculated
+		total_vars = size(corrs)[1]
+		addl_hidden = size(calculated)[1] - total_vars
+		#total_vars = size(calculated)[1]
 	end 
 	if length(nodes) < 3 
 		error("Need 3 nodes to do distance algebra")
@@ -131,6 +218,7 @@ function distance_algebra(nodes::Array{Int64, 1}, corrs::Array{Float64, 2}; calc
 	calcs = 0
 	siblings = Array{Tuple, 1}()
 	parents = Dict{Int64, Array{Int64, 1}}()
+	#phi, parents, siblings = test_node_relationships(nodes, calculated, dist; threshold = threshold, max_dist = max_dist)
 	for p in permlist
 		if length(unique(p)) != comparison_order
 			continue
@@ -191,12 +279,20 @@ function distance_algebra(nodes::Array{Int64, 1}, corrs::Array{Float64, 2}; calc
 					append!(siblings, [(i,j)])
 				end
 			end
-			println()
 			append!(considered, [(i,j)])
 		end
 	end
+	hidden_edges = Dict{Int64, Array{Tuple, 1}}()
+	if !isempty(parents)
+		# key 0 denotes observed
+		hidden_edges[0] = [(i,j) for i in keys(parents) for j in parents[i]]
+		println("Parent Edges : ", hidden_edges[0])
+		# DISTINGUISH WHO IS PARENT / WHO IS CHILD 
+	end
+
 
 	hidden_children = Array{Tuple,1}()
+	# DO SOMETHING WITH PARENTS !! 
 	siblings = unique(siblings)
 	#(why not make this a dictionary => nodes or edge tuples...need tuples to calc distances)
 	if !isempty(siblings)
@@ -210,38 +306,73 @@ function distance_algebra(nodes::Array{Int64, 1}, corrs::Array{Float64, 2}; calc
 			end
 		end
 	end
-	# hidden dist
+	# println("(1,3,2): ", phi[(1,3,2)])
+	# println("(1,3,6): ", phi[(1,3,6)])
+	# println("(2,3,1): ", phi[(2,3,1)])
+	# println("(2,3,6): ", phi[(2,3,6)])
+	# println("(3,6,1): ", phi[(3,6,1)])
+	# println("(3,6,2): ", phi[(3,6,2)])
+	# println("(1,6,2): ", phi[(1,6,2)])
+	# println("(1,6,3): ", phi[(1,6,3)])
+	# println("(2,6,1): ", phi[(2,6,1)])
+	# println("(2,6,3): ", phi[(2,6,3)])
+	# println("(1,3,2): ", phi[(1,3,2)])
 	hidden_dists = zeros(total_vars)
-	
+	println("Hidden children : ", hidden_children)
 	#addl_hidden = 0
-	hidden_edges = Dict{Int64, Array{Tuple, 1}}()
+	
 	for child_tup in hidden_children
 		hidden_dists = zeros(total_vars + addl_hidden)
-
-		d_ih = 0
-		for i in child_tup
-			d_ih = 0
-			for j in child_tup
+		addl_hidden +=1
+		hidden =  total_vars+addl_hidden
+		#println("HIDDEN ", hidden, " CHILDREN ", child_tup)
+		d_ih = 0.0
+		for i in setdiff(child_tup, (hidden,))
+			d_ih = 0.0
+			for j in setdiff(child_tup, (hidden,))
 				if i != j
+					println(i,",", j)
 					#println("Searching tuple ", tuple([sort_tuple((i,j))...; 3]...))
 					k_ij = [phi[tuple([sort_tuple((i,j))...; k]...)] for k in nodes if tuple([sort_tuple((i,j))...; k]...) in keys(phi)]
-					d_ih += calculated[i,j] + 1.0/length(k_ij)*sum(k_ij)
+					#println("tuples for calculating distance: ", [tuple([sort_tuple((i,j))...; k]...) for k in nodes if tuple([sort_tuple((i,j))...; k]...) in keys(phi)])
+					#println("\t dist ij: ", calculated[i,j], " k_ij: ", k_ij, " d_ih: ", d_ih)
+					d_ih = d_ih + (calculated[i,j] + 1.0/length(k_ij)*sum(k_ij))
 					#println("i: ", i, " j: ", j, " k_ij: ", [tuple([sort_tuple((i,j))...; k]...) for k in nodes if tuple([sort_tuple((i,j))...; k]...) in keys(phi)])
 				end
 			end
-			d_ih = 1/(2*length(child_tup)-1)*d_ih
+			println(d_ih)
+			d_ih = .5/(length(child_tup)-1)*d_ih
+			println("NEW CALCULATED child DISTANCE ", i ,":",d_ih)
 			hidden_dists[i] = d_ih
 		end
-		for i in nodes 
-			if !(i in child_tup)
-				if i <= total_vars # Needs to be observed...
-					d_ih = 1/(length(child_tup))*sum(calculated[i,k] - hidden_dists[k] for k in child_tup)
-				else
-					d_ih = 0.0
-					println("not calculated for ", i, " child tup ", child_tup)
-					#need to implement
-				end
+		# for i in setdiff(nodes, child_tup)
+		for i in setdiff([1:hidden...], union(child_tup, hidden))
+			#println("New distance ", i, union(child_tup, hidden),[1:hidden...], setdiff([1:hidden...], union(child_tup, hidden)))
+			if i <= total_vars # Needs to be observed...
+				d_ih = 1/(length(child_tup))*sum(calculated[i,k] - hidden_dists[k] for k in child_tup)
+				#println("NEW CALCULATED other vertex DISTANCE ", i, ": ", d_ih)
+			else
+				d_ih = 0.0
+				#println("not calculated for ", i, " child tup ", child_tup)
+				h_neighbors = [j for j in nodes if j <= total_vars && calculated[i,j] > 0.0] 
+				#println("Length of hidden neighbors? ", length(h_neighbors), " : ", h_neighbors)
+				for c in child_tup
+					for hn in h_neighbors
+						# shouldn't happen
+						# if calculated[c, hn] == 0.0
+						# end
+						# if calculated[c, hidden] == 0.0
+						# end
+						# if calculated[hn, i] == 0.0
+						# end
+						d_ih += calculated[c, hn] - calculated[hn, i] - hidden_dists[c]
+					end
+				end 
+				d_ih = 1/length(child_tup)*1/length(h_neighbors)*d_ih
+				#(i in Ch / j in Ck) child: d_ij - d_ih - d_jk
+				#need to implement
 			end
+			#end
 			hidden_dists[i] = d_ih
 		end
 		#println("calculated size ", size(calculated), " hidden dist ", size(transpose(hidden_dists)))
@@ -249,11 +380,10 @@ function distance_algebra(nodes::Array{Int64, 1}, corrs::Array{Float64, 2}; calc
 		#println("appending to hidden_dists ", child_tup)
 		append!(hidden_dists, [0])
 		calculated = [calculated hidden_dists]
-		addl_hidden +=1
 		hidden_edges[total_vars+addl_hidden] = [(i, total_vars+addl_hidden) for i in child_tup]
 	end
-	println("siblings: ", siblings)
-	println("hidden children ", hidden_children)
+	#println("siblings: ", siblings)
+	#println("hidden children ", hidden_children)
 	return hidden_edges, calculated
 end
 
@@ -373,6 +503,7 @@ function find_cliques{T<:Tuple}(edges::Array{T ,1})
 	end
 	return cliques
 end
+
 
 # function sort_tuple(t::Tuple)
 # 	return tuple(sort!([i for i in t])...)
