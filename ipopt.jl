@@ -3,7 +3,7 @@ using JuMP
 using Compat
 using MathProgBase
 using Mosek 
-using SCS
+#using SCS
 
 include("mrf.jl")
 include("utils.jl")

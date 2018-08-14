@@ -279,6 +279,7 @@ for r = 1:runs
 	println()
 
 	println("RISE Learned by Magnitude")
+
 	for k in key2
 		for i in 1:length(k)
 			print(i != length(k) ? string(k[i], ", ") : k[i])

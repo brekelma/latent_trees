@@ -1,10 +1,11 @@
-#using PyPlot
+using PyPlot
 include("mrf.jl")
 include("math.jl")
 using PlotRecipes
 using Graphs
-using GraphPlot
-using LightGraphs, SimpleWeightedGraphs
+#using GraphPlot
+using LightGraphs
+#using SimpleWeightedGraphs
 using Colors
 using Compose
 using Combinatorics

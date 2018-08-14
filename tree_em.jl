@@ -1,14 +1,14 @@
 using CSV
 using GraphicalModelLearning
-using MATLAB
-using PyPlot
+#using MATLAB
+#using PyPlot
 
 include("utils.jl")
 include("mrf.jl")
 include("ipopt.jl")
-include("learning_trees.jl")
+#include("learning_trees.jl")
 
-PyPlot.ioff()
+#PyPlot.ioff()
 
 runs = 10
 fn = "extended_tree_321.csv"
@@ -57,7 +57,7 @@ model = FactorGraph(maximum([length(i) for i in keys(tree_params)]),
 full_samples = GraphicalModelLearning.sample(model, num_samp)
 samples = full_samples[:,1:(obs+1)]
 
-p = mrf(tree_params, full_samples)
+p = mrf(tree_params, samples)
 
 #if isa(q, Array) #typeof(q) != GraphicalModelLearning.FactorGraph{Float64} && typeof(q) != GraphicalModelLearning.FactorGraph{Real}
 #	q = FactorGraph(learn_order, obs, :spin, array2dict(q)) 
@@ -69,17 +69,21 @@ p = mrf(tree_params, full_samples)
 #3 and 1, see if it learns tree from 51-49 init
 
 
-function param_distance{T<:Real, S<:Real}(params1::Dict{Tuple, T}, params2::Dict{Tuple,S})
+function param_distance{T<:Real, S<:Real}(params1::Dict{Tuple, T}, params2::Dict{Tuple,S}; norm = 2)
 	dist = 0
 	if isempty(params2) || !isempty(setdiff(collect(keys(params1)), collect(keys(params2))))
 		return NaN
 	end
 	for i in keys(params1)
 		if i in keys(params2)
-			dist += (params1[i]-params2[i])^2
+			if norm == 2 
+				dist += (params1[i]-params2[i])^2
+			else #if norm == "max" || norm == "infinity"
+				dist = (params1[i]-params2[i]) > dist ? (params1[i]-params2[i]) : dist
+			end
 		end
 	end
-	return sqrt(dist)
+	return isa(Int64, norm) ? dist^(1/norm) : dist
 end
 
 
@@ -171,7 +175,8 @@ just_hidden = false
 #println("initial samples")
 #pprint2d(my_samples, latex = false)
 kls = Array{Float64,1}()
-params_dist = Array{Float64,1}()
+update_dist = Array{Float64,1}()
+true_dist = Array{Float64, 1}()
 iterstops = Array{Float64,1}()
 
 for n_hidden = 1:max_hidden
@@ -190,7 +195,7 @@ end
 println("New keys ", collect(keys(my_params)))
 iter = 0
 
-while iter < iters && ( iter <=500 || (!(param_distance(my_params, prev_params) < tol) && iter < iters))
+while iter < iters && ( iter <=5 || (!(param_distance(my_params, prev_params) < tol) && iter < iters))
 	
 	h_edges = Array{Tuple,1}()
 	other_edges = Array{Tuple,1}()
@@ -235,7 +240,10 @@ while iter < iters && ( iter <=500 || (!(param_distance(my_params, prev_params) 
 	else
 		qh = GraphicalModelLearning.learn(my_samples, learner, NLP(), h_edges, node = hidden_learn)
 	end
-
+	if full_rise
+		q_all = GraphicalModelLearning.learn(my_samples, learner, NLP())
+		q_all = isa(q_all, Array) ? array2dict(q_all) : q_all.terms
+	end
 	#println("Qh Terms")
 	#for hi in sort_params(qh.terms)
 #		println(hi, " : ", qh.terms[hi])
@@ -277,15 +285,33 @@ while iter < iters && ( iter <=500 || (!(param_distance(my_params, prev_params) 
 	kl = kl_empirical(pp, my_hmrf)
 	println("KL divergence ", kl)
 	append!(kls, [kl])
+
 	param_dist = param_distance(my_params, prev_params)
-	append!(params_dist, [param_dist])
+	append!(update_dist, [param_dist])
+	true_diff = param_distance(my_params, true_params)
+	append!(true_dist, [true_diff])
+
 	if printall 
 		for i in sort_params(my_params)
 			println("\t", i, " => ", my_params[i])
 		end
 	end
 	
-	just_hidden = false #!isnan(param_dist)
+	just_hidden = !isnan(param_dist)
+	if isnan(param_dist)
+		keyz = collect([keys(q_all)...])
+		# keyz = keyz[sortperm([length(i)==1 ? 0 : i[2] for i in keyz])]
+		# keyz = keyz[sortperm([i[1] for i in keyz])]
+		key2 = keyz[sortperm([-abs(q_all[i]) for i in keyz])]
+		for k in key2
+			for i in 1:length(k)
+				print(i != length(k) ? string(k[i], ", ") : k[i])
+			end
+			println("\t & \t", round(q_all[k],3), " \\\\ ")
+		end
+	end
+
+	end
 	println("Param update : ", param_dist)
 end
 append!(iterstops, [length(kls)])
@@ -322,7 +348,7 @@ for i =1:length(kls)
 		println("Hidden variable : ", obs+j)
 		j+=1
 	end 
-	println("Iter ", i, " \t KL : ", kls[i], " \t Param Improvement : ", params_dist[i])
+	println("Iter ", i, " \t KL : ", kls[i], " \t Param Improvement : ", update_dist[i], " \t Param Improvement : ", true_dist[i])
 end
 # put my_params into MRF
 #model = FactorGraph(maximum([length(i) for i in keys(my_params )]), 

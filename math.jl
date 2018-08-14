@@ -1,4 +1,4 @@
-using InformationMeasures
+#using InformationMeasures
 
 function mi_bin_im{T <: Real}(samples::Array{T, 2})
 	mi = zeros(size(samples)[1], size(samples)[1])
